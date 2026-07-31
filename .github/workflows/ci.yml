@@ -7,8 +7,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: proof-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   proof:
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

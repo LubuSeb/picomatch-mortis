@@ -26,7 +26,9 @@ if (!isMainThread) {
     while (true) {
       Atomics.wait(control, 0, 0)
       if (Atomics.load(control, 0) === -1) {
+        lines.close()
         child.kill()
+        parentPort.close()
         return
       }
       const request = decoder.decode(bytes.subarray(0, Atomics.load(control, 1)))
@@ -64,6 +66,7 @@ if (!isMainThread) {
   const worker = new Worker(__filename, { workerData: { shared, binary } })
   Atomics.wait(control, 0, -2)
   worker.unref()
+  let closePromise
 
   const hex = value => Buffer.from(String(value)).toString('hex')
   const call = args => {
@@ -83,5 +86,14 @@ if (!isMainThread) {
     return value
   }
 
-  module.exports = { call }
+  const close = () => {
+    if (!closePromise) {
+      closePromise = new Promise(resolve => worker.once('exit', resolve))
+      Atomics.store(control, 0, -1)
+      Atomics.notify(control, 0)
+    }
+    return closePromise
+  }
+
+  module.exports = { call, close }
 }
