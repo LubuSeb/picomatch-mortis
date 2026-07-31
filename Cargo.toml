@@ -1,0 +1,15 @@
+[package]
+name = "picomatch-mortis"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "A proof-driven Rust port of micromatch/picomatch"
+repository = "https://github.com/LubuSeb/picomatch-mortis"
+
+[lib]
+name = "picomatch_mortis"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
