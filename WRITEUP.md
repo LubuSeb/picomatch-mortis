@@ -53,10 +53,12 @@ across four fixed seeds with zero mismatches.
 | Composed extglob and globstar | `@(a\|b)**` across path segments | Preserve context-specific globstar and Bash boundaries |
 
 The original tests still call a Picomatch-shaped JavaScript API. A thin adapter
-serializes calls to one persistent Rust process. It reconstructs JavaScript
-objects and invokes JavaScript callbacks, but contains no scanning or glob
-logic. That division matters: test parity is evidence about the Rust port, not
-about a second JavaScript implementation hidden in the harness.
+serializes calls to one persistent Rust process. JavaScript retains argument
+validation, arrays, callback invocation (including `expandRange`
+transformation), and `RegExp` reconstruction, but contains no built-in matcher.
+Scanning, compilation, and Boolean matching otherwise run in Rust. That
+division makes the native boundary explicit rather than hiding a second
+JavaScript matching implementation in the harness.
 
 ## What resisted a direct translation
 
@@ -133,9 +135,12 @@ post-kickoff history, and reproducible proof commands. It is not a formal
 equivalence proof for every possible string. JavaScript callback invocation
 necessarily remains in the adapter, the crate uses a pinned ECMAScript regex
 dependency, and neither the Rust API nor CLI has been published as a stable
-package yet.
+package yet. The native compiler also deliberately rejects structural nesting
+above 64 and suffix-recursive patterns that exhaust its proportional work
+budget; extreme valid upstream inputs can therefore hit a safety boundary.
 
-Those limits are visible by design. The claim is precise: every unchanged
-upstream executable test passes through the Rust implementation on both major
-path platforms, and the separate deterministic differential corpus currently
-finds no behavioral discrepancy, with unsafe code forbidden in this crate.
+Those limits are visible by design. The claim is precise: all 1,977 unchanged
+upstream assertions pass with Rust providing scanning, compilation, and Boolean
+matching on both major path platforms. The separate bounded deterministic
+differential corpus currently finds no Boolean discrepancy, and unsafe code is
+forbidden in this crate.

@@ -110,3 +110,19 @@ story as the largest avoidable risks.
 compiled-once benchmark, explicit bridge failure bounds, a claim-to-evidence
 table, and a short demo runbook. Agent opinion is documented as process, not
 presented as proof.
+
+## D008 -- Bound native compilation work
+
+**Time:** 2026-07-31, final adversarial hardening
+
+**Decision:** Cap structural nesting at 64 and give recursive compilation a
+work budget proportional to pattern length, with a 4,096-step floor.
+
+**Why:** An accepted 120-level brace pattern could exhaust the Windows debug
+stack, and repeated adjacent negative extglobs caused exponential suffix
+recompilation. Syntactic length alone did not bound either cost.
+
+**Consequence:** The native API now rejects those inputs in milliseconds
+instead of aborting or growing exponentially. This intentionally differs from
+upstream for extreme but syntactically valid patterns and is disclosed as a
+safety boundary.

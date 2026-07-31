@@ -15,8 +15,8 @@ const examples = [
 const main = async () => {
   try {
     console.log('Picomatch Mortis - Track F: JavaScript to Rust')
-    console.log('Proof: 1,977 unchanged upstream + 15 native tests')
-    console.log('Differential: 80,000 bounded cases across 4 seeds, 0 mismatches\n')
+    console.log('Proof: 1,977 unchanged upstream + 16 native tests')
+    console.log('Differential: 80,000 bounded cases + directed regressions, 0 mismatches\n')
 
     console.log('native matching')
     for (const [name, input, pattern, options, expected] of examples) {

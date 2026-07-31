@@ -85,10 +85,36 @@ const outcome = operation => {
 
 const equal = (left, right) => left.kind === right.kind && left.value === right.value
 
+const directedCases = [
+  ['/', '[^a]*', { regex: true }],
+  ['a/b/c', 'a/!(b)', { contains: true }],
+  ['ab', '!(!(a))', { contains: true }],
+  ['.a', '**/*a', { contains: true }],
+  ['x/.a', '**/*a', { contains: true }],
+  ['.a', '**/*', { contains: true }],
+  ['a/', '**?(a)', {}],
+  ['a/b', '**?(a)', {}],
+  ['x/a', '**@(a)', {}],
+  ['b', '***(a)', {}],
+  ['a/a', '**{a,b}', {}],
+  ['a/a/a', '!(b)**/*', {}],
+  ['b/a', '!(b)**/*', {}],
+  ['a/.x/y', '!(b)**/*', { dot: true }],
+  ['a/.x/y', '!(b)**/*', {}],
+]
+
 const main = async () => {
   const mismatches = []
   let mismatchCount = 0
   try {
+    for (const [candidate, glob, opts] of directedCases) {
+      const expected = outcome(() => reference.isMatch(candidate, glob, opts))
+      const actual = outcome(() => port.isMatch(candidate, glob, opts))
+      if (!equal(expected, actual)) {
+        mismatchCount += 1
+        mismatches.push({ directed: true, glob, input: candidate, options: opts, expected, actual })
+      }
+    }
     for (let index = 0; index < caseCount; index += 1) {
       const opts = options()
       const glob = pattern()
@@ -107,6 +133,7 @@ const main = async () => {
   }
 
   console.log(`Differential seed: 0x${seed.toString(16).padStart(8, '0')}`)
+  console.log(`Directed cases compared: ${directedCases.length.toLocaleString('en-US')}`)
   console.log(`Cases compared: ${caseCount.toLocaleString('en-US')}`)
   console.log(`Mismatches: ${mismatchCount}`)
   if (mismatchCount > 0) {

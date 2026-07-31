@@ -3,7 +3,9 @@ use std::fmt;
 use regress::{Flags, Regex};
 
 const MAX_LENGTH: usize = 1024 * 64;
-const MAX_NESTING: usize = 256;
+const MAX_NESTING: usize = 64;
+const MIN_COMPILE_WORK: usize = 4096;
+const COMPILE_WORK_FACTOR: usize = 64;
 
 /// Options shared with Picomatch's matching API.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -108,7 +110,7 @@ impl GlobPattern {
         if options.strict_brackets {
             validate_brackets(&chars)?;
         }
-        let mut compiler = Compiler::new(&options, false);
+        let mut compiler = Compiler::new(&options, false, chars.len());
         let body = compiler.compile(&chars, true)?;
         let contains_negation_body = if negated && options.contains && value == "**" {
             strip_leading_segment_guard(&body, options.dot)
@@ -143,7 +145,7 @@ impl GlobPattern {
         // negated class can include `/`. Native matching still has to enforce
         // glob segment boundaries, so compile a private execution form that
         // also excludes path separators from negated classes.
-        let mut match_compiler = Compiler::new(&options, true);
+        let mut match_compiler = Compiler::new(&options, true, chars.len());
         let match_body = match_compiler.compile(&chars, true)?;
         let match_contains_negation_body = if negated && options.contains && value == "**" {
             strip_leading_segment_guard(&match_body, options.dot)
@@ -305,20 +307,34 @@ struct Compiler<'a> {
     exclude_slash_in_negated_classes: bool,
     inside_negative: bool,
     inside_extglob: bool,
+    remaining_work: usize,
 }
 
 impl<'a> Compiler<'a> {
-    fn new(options: &'a GlobOptions, exclude_slash_in_negated_classes: bool) -> Self {
+    fn new(
+        options: &'a GlobOptions,
+        exclude_slash_in_negated_classes: bool,
+        pattern_length: usize,
+    ) -> Self {
         Self {
             options,
             trailing_magic: false,
             exclude_slash_in_negated_classes,
             inside_negative: false,
             inside_extglob: false,
+            remaining_work: pattern_length
+                .saturating_mul(COMPILE_WORK_FACTOR)
+                .max(MIN_COMPILE_WORK),
         }
     }
 
     fn compile(&mut self, chars: &[char], mut segment_start: bool) -> Result<String, GlobError> {
+        self.remaining_work = self
+            .remaining_work
+            .checked_sub(chars.len())
+            .ok_or_else(|| {
+                GlobError("Pattern compilation exceeds the safe work limit".to_owned())
+            })?;
         let mut output = String::new();
         let mut index = 0;
         let mut quoted = false;
@@ -493,7 +509,7 @@ impl<'a> Compiler<'a> {
                             continue;
                         }
                     }
-                    if value == '!' {
+                    if value == '!' && !self.options.contains {
                         if let Some((inner_depth, literal)) = nested_negative_literal(body) {
                             let total_depth = inner_depth + 1;
                             let literal = self.compile(literal, false)?;
@@ -559,7 +575,7 @@ impl<'a> Compiler<'a> {
                             };
                             let boundary = if end + 1 < chars.len() {
                                 ""
-                            } else if self.options.bash {
+                            } else if self.options.contains || self.options.bash {
                                 "$"
                             } else {
                                 "(?:/|$)"
@@ -587,13 +603,16 @@ impl<'a> Compiler<'a> {
                 if self.options.regex && index > 0 && matches!(chars[index - 1], ']' | ')') {
                     output.push('*');
                     segment_start = false;
-                    self.trailing_magic = false;
+                    self.trailing_magic = true;
                     index += 1;
                     continue;
                 }
                 let mut end = index + 1;
                 while chars.get(end) == Some(&'*') {
-                    if !self.options.noextglob && chars.get(end + 1) == Some(&'(') {
+                    if end - index == 1
+                        && !self.options.noextglob
+                        && chars.get(end + 1) == Some(&'(')
+                    {
                         break;
                     }
                     end += 1;
@@ -612,17 +631,17 @@ impl<'a> Compiler<'a> {
                     self.trailing_magic = false;
                     continue;
                 }
-                let followed_by_extglob =
-                    matches!(chars.get(end), Some('?' | '*' | '+' | '@' | '!'))
-                        && chars.get(end + 1) == Some(&'(');
-                let followed_by_group = chars.get(end) == Some(&'{') || followed_by_extglob;
+                let followed_by_group = chars.get(end) == Some(&'{')
+                    || (chars.get(end) == Some(&'@') && chars.get(end + 1) == Some(&'('));
                 let globstar = end - index == 2
                     && !self.options.noglobstar
                     && ((segment_start
                         && (end == chars.len()
                             || chars.get(end) == Some(&'/')
                             || followed_by_group))
-                        || (index > 0 && chars.get(index - 1) == Some(&')') && end == chars.len()));
+                        || (index > 0
+                            && chars.get(index - 1) == Some(&')')
+                            && (end == chars.len() || chars.get(end) == Some(&'/'))));
                 if globstar && segment_start && chars.get(end) == Some(&'/') {
                     if index == 0 {
                         let traversal = if self.options.dot {
@@ -630,7 +649,7 @@ impl<'a> Compiler<'a> {
                         } else {
                             r"(?:(?!(?:^|\/)\.).)*?"
                         };
-                        if chars.get(end + 1) == Some(&'*') {
+                        if chars.get(end + 1) == Some(&'*') && end + 2 == chars.len() {
                             let guard = self.segment_guard();
                             output.push_str(&format!(r"(?:{guard}{traversal}\/)?"));
                         } else {
@@ -643,6 +662,19 @@ impl<'a> Compiler<'a> {
                     }
                     index = end + 1;
                     segment_start = true;
+                } else if globstar
+                    && index > 0
+                    && chars.get(index - 1) == Some(&')')
+                    && chars.get(end) == Some(&'/')
+                {
+                    let traversal = if self.options.dot {
+                        r"(?:(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?)"
+                    } else {
+                        r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                    };
+                    output.push_str(traversal);
+                    index = end;
+                    segment_start = false;
                 } else if globstar && end == chars.len() {
                     let follows_extglob = index > 0 && chars.get(index - 1) == Some(&')');
                     let body = if follows_extglob && self.options.bash {
@@ -1581,12 +1613,20 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_nesting_and_range_overflow() {
-        let nested = format!(
+        let accepted = format!("{}a{}", "{".repeat(MAX_NESTING), "}".repeat(MAX_NESTING));
+        assert!(GlobPattern::new(&accepted, GlobOptions::default()).is_ok());
+
+        let rejected = format!(
             "{}a{}",
             "{".repeat(MAX_NESTING + 1),
             "}".repeat(MAX_NESTING + 1)
         );
-        assert!(GlobPattern::new(&nested, GlobOptions::default()).is_err());
+        assert!(GlobPattern::new(&rejected, GlobOptions::default()).is_err());
+        let repeated_negative_suffix = "!(*).x".repeat(16);
+        let error = GlobPattern::new(&repeated_negative_suffix, GlobOptions::default())
+            .err()
+            .expect("repeated negative suffixes must exhaust the compile-work budget");
+        assert!(error.to_string().contains("safe work limit"));
         assert!(
             GlobPattern::new(
                 "{9223372036854775806..9223372036854775807}",
@@ -1595,5 +1635,63 @@ mod tests {
             .is_ok()
         );
         assert!(GlobPattern::new("{1..2..-9223372036854775808}", GlobOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn matches_directed_regex_and_contains_regressions() {
+        let regex = GlobOptions {
+            regex: true,
+            ..GlobOptions::default()
+        };
+        assert!(is_match("/", "[^a]*", regex.clone()).unwrap());
+        assert!(is_match("b/", "[^a]*", regex.clone()).unwrap());
+        assert!(!is_match("/b", "[^a]*", regex).unwrap());
+
+        let contains = GlobOptions {
+            contains: true,
+            ..GlobOptions::default()
+        };
+        assert!(is_match("a/b/c", "a/!(b)", contains.clone()).unwrap());
+        assert!(!is_match("a/b", "a/!(b)", contains.clone()).unwrap());
+        assert!(is_match("a/c", "a/!(b)", contains.clone()).unwrap());
+        assert!(is_match("a", "!(!(a))", contains.clone()).unwrap());
+        assert!(!is_match("ab", "!(!(a))", contains.clone()).unwrap());
+        assert!(is_match("ba", "!(!(a))", contains.clone()).unwrap());
+        assert!(!is_match("b", "!(!(a))", contains.clone()).unwrap());
+        assert!(!is_match(".a", "**/*a", contains.clone()).unwrap());
+        assert!(!is_match("x/.a", "**/*a", contains.clone()).unwrap());
+        assert!(is_match("x/a", "**/*a", contains).unwrap());
+        assert!(
+            is_match(
+                ".a",
+                "**/*",
+                GlobOptions {
+                    contains: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+
+        assert!(!is_match("a/", "**?(a)", GlobOptions::default()).unwrap());
+        assert!(!is_match("a/b", "**?(a)", GlobOptions::default()).unwrap());
+        assert!(is_match("a", "**?(a)", GlobOptions::default()).unwrap());
+        assert!(is_match("x/a", "**@(a)", GlobOptions::default()).unwrap());
+        assert!(!is_match("b", "***(a)", GlobOptions::default()).unwrap());
+        assert!(is_match("a/a", "**{a,b}", GlobOptions::default()).unwrap());
+        assert!(is_match("a/a/a", "!(b)**/*", GlobOptions::default()).unwrap());
+        assert!(!is_match("b/a", "!(b)**/*", GlobOptions::default()).unwrap());
+        assert!(
+            is_match(
+                "a/.x/y",
+                "!(b)**/*",
+                GlobOptions {
+                    dot: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(!is_match("a/.x/y", "!(b)**/*", GlobOptions::default()).unwrap());
     }
 }

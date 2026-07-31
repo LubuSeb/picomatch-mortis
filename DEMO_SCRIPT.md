@@ -8,7 +8,7 @@ before starting; use a large font. Target length: 2:20.
 > Picomatch Mortis is a from-scratch Rust port of Picomatch for Track F. The
 > claim is deliberately narrow and reproducible: all 1,977 executable tests
 > from the exact kickoff commit pass unchanged on Ubuntu and Windows, together
-> with 15 native Rust regressions.
+> with 16 native Rust regressions.
 
 Show the CI badge and the "Judge it in 60 seconds" table in `README.md`.
 

@@ -2,6 +2,8 @@
 
 [![proof](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml/badge.svg)](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml)
 
+[Benchmark report](BENCHMARK.md) · [2–3 minute demo runbook](DEMO_SCRIPT.md)
+
 A from-scratch JavaScript-to-Rust port of
 [`micromatch/picomatch`](https://github.com/micromatch/picomatch), selected from
 the official Port Mortem 2026 pool. **Track F: JavaScript to Go/Rust.**
@@ -11,9 +13,10 @@ select the wrong files in a build, test, or packaging pipeline.
 ## Result
 
 - **1,977/1,977 unchanged upstream tests pass** across all 36 executable
-  suites, plus 15 native Rust regressions.
+  suites, plus 16 native Rust regressions.
 - A seeded differential harness compares the original and port on **80,000
-  bounded Boolean-match cases across four seeds: 0 mismatches**.
+  bounded Boolean-match cases across four seeds, plus 15 directed adversarial
+  regressions: 0 mismatches**.
 - The 38-file snapshot is SHA-256 checked offline and can be fetched and
   byte-compared directly with the exact upstream commit.
 - CI runs the complete proof and strict Clippy on Ubuntu and Windows with
@@ -32,14 +35,20 @@ matrices; callbacks and ignore/format hooks; and malicious-pattern safeguards.
 | Claim | Reproducible evidence |
 | --- | --- |
 | The tests are really upstream's | `npm run verify:upstream` fetches commit `4f41a8e` and compares the complete 38-file test tree after LF normalization |
-| The frozen behavior is preserved | `npm test` runs 1,977 unchanged upstream tests and 15 native regressions |
-| The bounded Boolean matcher corpus agrees | `npm run fuzz:ci` reports 80,000 comparisons across four fixed seeds and 0 mismatches |
+| The frozen behavior is preserved | `npm test` runs 1,977 unchanged upstream tests and 16 native regressions |
+| The bounded Boolean matcher corpus agrees | `npm run fuzz:ci` reports 80,000 generated comparisons across four fixed seeds plus 15 directed regressions per run, with 0 mismatches |
 | The implementation is native and safe | Core scan/compile/match code is Rust; this crate forbids unsafe code and `regress` is built with `prohibit-unsafe` |
 | It works on both path platforms | [CI](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml) runs every proof gate on Ubuntu and Windows |
 
 ## Reproduce it
 
 Requirements: Rust 1.85 or newer, Node.js 24 or newer, and Git.
+
+Single build command:
+
+```sh
+cargo build --release
+```
 
 ```sh
 npm ci
@@ -143,14 +152,15 @@ Boolean matcher behavior otherwise run in Rust.
 | `scan`, `parse`, `makeRe`, options and callbacks used upstream | Covered by unchanged upstream suites |
 | Rust library and CLI | Implemented and tested; not yet published as a stable package |
 | JS-only callback execution and array orchestration | Intentionally remains in the thin adapter |
+| Adversarial compiler inputs | Native compilation rejects structural nesting above 64 and patterns that exhaust a proportional work budget; this is an intentional safety boundary |
 | Raw user regex with ambiguous nested repetition | The bridge has a bounded failure-and-teardown path; no formal worst-case guarantee is claimed |
-| Differential surface | Boolean results and error classes only; `scan`/`parse`/`makeRe` and callback objects rely on the frozen suites |
+| Differential surface | The random grammar exercises defaults plus `dot`, `nocase`, `contains`, `nonegate`, `noglobstar`, `nobrace`, `nobracket`, `strictSlashes`, `bash`, Windows/POSIX, and literal-bracket modes; directed regressions add selected `regex` compositions. `scan`/`parse`/`makeRe`, captures, and callback objects rely on the frozen suites |
 | Entire input space | Not formally proven; the claim is limited to the evidence above |
 
-The local direct-native benchmark reports hundreds of thousands of
-matches/second for four precompiled representative patterns on the development
-machine, depending on system load. It is a smoke measurement, not a
-cross-language victory claim.
+The local direct-native benchmark reports about 0.59 million matches/second for
+four precompiled representative patterns on the development machine. The
+methodology, pinned-reference comparison, bridge cost, and limitations are in
+[BENCHMARK.md](BENCHMARK.md); it is not a cross-language victory claim.
 
 See [WRITEUP.md](WRITEUP.md) for the publishable porting narrative,
 [DECISIONS.md](DECISIONS.md) for the engineering decision log, and

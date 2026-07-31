@@ -48,9 +48,16 @@ const nativeMatch = (input, glob, options, originalInput = input) => {
   return matched
 }
 
-const nativeOutput = (command, glob, options) => call([
-  ...optionArgs(options), command, expandRanges(glob, options),
-])
+const nativeOutput = (command, glob, options) => {
+  try {
+    return call([...optionArgs(options), command, expandRanges(glob, options)])
+  } catch (error) {
+    if (options && options.strictBrackets && /Missing (?:opening|closing):/.test(error.message)) {
+      throw new SyntaxError(error.message)
+    }
+    throw error
+  }
+}
 
 const picomatch = function (glob, options, returnState = false) {
   if (Array.isArray(glob)) {
