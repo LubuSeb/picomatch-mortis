@@ -10,8 +10,8 @@ if (!isMainThread) {
   const { spawn } = require('node:child_process')
   const { once } = require('node:events')
   const readline = require('node:readline')
-  const control = new Int32Array(workerData.shared, 0, 2)
-  const bytes = new Uint8Array(workerData.shared, 8)
+  const control = new Int32Array(workerData.shared, 0, 3)
+  const bytes = new Uint8Array(workerData.shared, 12)
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
   const child = spawn(workerData.binary, workerData.binaryArgs, {
@@ -29,38 +29,40 @@ if (!isMainThread) {
   })
 
   const loop = async () => {
-    Atomics.store(control, 0, 0)
-    Atomics.notify(control, 0)
+    let handledSequence = 0
+    Atomics.store(control, 1, handledSequence)
+    Atomics.notify(control, 1)
     while (true) {
-      Atomics.wait(control, 0, 0)
-      if (Atomics.load(control, 0) === -1) {
+      Atomics.wait(control, 0, handledSequence)
+      const requestSequence = Atomics.load(control, 0)
+      if (requestSequence === -1) {
         lines.close()
         child.kill()
         parentPort.close()
         return
       }
-      const request = decoder.decode(bytes.subarray(0, Atomics.load(control, 1)))
+      const request = decoder.decode(bytes.subarray(0, Atomics.load(control, 2)))
       child.stdin.write(request)
       const [response] = await once(lines, 'line')
       const encoded = encoder.encode(response)
       bytes.set(encoded)
-      Atomics.store(control, 1, encoded.length)
-      Atomics.store(control, 0, 2)
-      Atomics.notify(control, 0)
-      Atomics.wait(control, 0, 2)
+      Atomics.store(control, 2, encoded.length)
+      handledSequence = requestSequence
+      Atomics.store(control, 1, handledSequence)
+      Atomics.notify(control, 1)
     }
   }
   loop().catch(error => {
     const encoded = encoder.encode(`error\t${Buffer.from(error.stack).toString('hex')}`)
     bytes.set(encoded)
-    Atomics.store(control, 1, encoded.length)
-    Atomics.store(control, 0, 2)
-    Atomics.notify(control, 0)
+    Atomics.store(control, 2, encoded.length)
+    Atomics.store(control, 1, Atomics.load(control, 0))
+    Atomics.notify(control, 1)
   })
 } else {
-  const shared = new SharedArrayBuffer(CAPACITY + 8)
-  const control = new Int32Array(shared, 0, 2)
-  const bytes = new Uint8Array(shared, 8)
+  const shared = new SharedArrayBuffer(CAPACITY + 12)
+  const control = new Int32Array(shared, 0, 3)
+  const bytes = new Uint8Array(shared, 12)
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
   const binary = process.env.PICOMATCH_MORTIS_BIN || path.join(
@@ -73,16 +75,18 @@ if (!isMainThread) {
   const binaryArgs = process.env.PICOMATCH_MORTIS_ARGS
     ? JSON.parse(process.env.PICOMATCH_MORTIS_ARGS)
     : ['serve']
-  Atomics.store(control, 0, -2)
+  Atomics.store(control, 0, 0)
+  Atomics.store(control, 1, -1)
   const worker = new Worker(__filename, { workerData: { shared, binary, binaryArgs } })
   const workerExit = new Promise(resolve => worker.once('exit', resolve))
-  if (Atomics.wait(control, 0, -2, TIMEOUT_MS) === 'timed-out') {
+  if (Atomics.wait(control, 1, -1, TIMEOUT_MS) === 'timed-out') {
     void worker.terminate()
     throw new Error(`Rust proof bridge did not start within ${TIMEOUT_MS}ms`)
   }
   worker.unref()
   let closePromise
   let failed = false
+  let requestSequence = 0
 
   const hex = value => Buffer.from(String(value)).toString('hex')
   const call = args => {
@@ -90,19 +94,21 @@ if (!isMainThread) {
     const request = encoder.encode(`${args.map(hex).join('\t')}\n`)
     if (request.length > CAPACITY) throw new RangeError('bridge request is too large')
     bytes.set(request)
-    Atomics.store(control, 1, request.length)
-    Atomics.store(control, 0, 1)
+    Atomics.store(control, 2, request.length)
+    const sequence = ++requestSequence
+    Atomics.store(control, 0, sequence)
     Atomics.notify(control, 0)
-    if (Atomics.wait(control, 0, 1, TIMEOUT_MS) === 'timed-out') {
+    if (Atomics.wait(control, 1, sequence - 1, TIMEOUT_MS) === 'timed-out') {
       failed = true
       worker.ref()
       worker.postMessage('stop')
       void worker.terminate()
       throw new Error(`Rust proof bridge request exceeded ${TIMEOUT_MS}ms`)
     }
-    const response = decoder.decode(bytes.subarray(0, Atomics.load(control, 1)))
-    Atomics.store(control, 0, 0)
-    Atomics.notify(control, 0)
+    if (Atomics.load(control, 1) !== sequence) {
+      throw new Error('Rust proof bridge returned an out-of-sequence response')
+    }
+    const response = decoder.decode(bytes.subarray(0, Atomics.load(control, 2)))
     const [status, payload] = response.split('\t', 2)
     const value = Buffer.from(payload || '', 'hex').toString()
     if (status === 'error') throw new TypeError(value)
