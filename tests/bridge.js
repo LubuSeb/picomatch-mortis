@@ -4,7 +4,11 @@ const path = require('node:path')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 
 const CAPACITY = 256 * 1024
-const TIMEOUT_MS = Number.parseInt(process.env.PICOMATCH_MORTIS_TIMEOUT_MS || '10000', 10)
+// Windows CI can briefly suspend freshly-built executables while they are scanned.
+// Keep the bridge bounded, but leave enough headroom that infrastructure jitter
+// is not mistaken for a semantic failure. The teardown test overrides this to
+// 200ms, so the failure path itself remains exercised on every platform.
+const TIMEOUT_MS = Number.parseInt(process.env.PICOMATCH_MORTIS_TIMEOUT_MS || '30000', 10)
 
 if (!isMainThread) {
   const { spawn } = require('node:child_process')
