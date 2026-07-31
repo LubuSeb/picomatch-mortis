@@ -12,3 +12,21 @@ Port Mortem 2026 pool repository.
 
 This repository and every port commit were created after kickoff. The Rust
 crate forbids unsafe code; implementation lands in small, auditable slices.
+
+## Proof status
+
+- Upstream scanner port: complete
+- Unchanged upstream `api.scan.js`: **40/40 passing** through a thin
+  JavaScript-to-Rust process adapter
+- Frozen upstream test snapshot: 38 files, verified against canonical SHA-256
+  hashes before every JavaScript proof run
+
+Run the current proof locally:
+
+```sh
+npm ci
+npm test
+```
+
+The adapter contains no glob or scanner logic. It only serializes arguments,
+invokes the native Rust CLI, and reconstructs the JavaScript-shaped result.

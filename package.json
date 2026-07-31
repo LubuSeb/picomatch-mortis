@@ -1,0 +1,11 @@
+{
+  "name": "picomatch-mortis-proof-harness",
+  "private": true,
+  "scripts": {
+    "test": "node scripts/verify-original.js && cargo test && npm run test:scan",
+    "test:scan": "cargo build && mocha tests/original/api.scan.js"
+  },
+  "devDependencies": {
+    "mocha": "10.4.0"
+  }
+}

@@ -13,3 +13,7 @@ path = "src/lib.rs"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[[bin]]
+name = "picomatch-mortis"
+path = "src/bin/picomatch-mortis.rs"
