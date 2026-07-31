@@ -24,6 +24,7 @@ pub struct GlobOptions {
     pub strict_brackets: bool,
     pub regex: bool,
     pub unescape: bool,
+    pub max_length: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,9 +59,10 @@ pub struct ParseToken {
 
 impl GlobPattern {
     pub fn new(pattern: &str, options: GlobOptions) -> Result<Self, GlobError> {
-        if pattern.len() > MAX_LENGTH {
+        let max_length = options.max_length.unwrap_or(MAX_LENGTH);
+        if pattern.len() > max_length {
             return Err(GlobError(format!(
-                "Input length: {}, exceeds maximum allowed length: {MAX_LENGTH}",
+                "Input length: {}, exceeds maximum allowed length: {max_length}",
                 pattern.len()
             )));
         }
@@ -523,6 +525,13 @@ impl<'a> Compiler<'a> {
                         index = end + 1;
                         continue;
                     }
+                    if is_unknown_posix_class(&raw) {
+                        output.push_str(&format!(r"[{raw}\]"));
+                        segment_start = false;
+                        self.trailing_magic = false;
+                        index = end + 1;
+                        continue;
+                    }
                     let translated = translate_class(&raw, self.exclude_slash_in_negated_classes);
                     let literal = format!(r"\[{}\]", escape_regex(&raw));
                     let class = if raw.starts_with(']') {
@@ -550,6 +559,11 @@ impl<'a> Compiler<'a> {
                 && (paren_depth > 0 || (index > 0 && matches!(chars[index - 1], ']' | ')' | '}')))
             {
                 output.push('+');
+            } else if !self.options.strict_brackets
+                && ((value == '(' && find_closing(chars, index, '(', ')').is_none())
+                    || (value == ')' && paren_depth == 0))
+            {
+                push_literal(&mut output, value);
             } else if value == '(' || value == ')' || value == '|' {
                 output.push(value);
                 if value == '(' {
@@ -815,6 +829,19 @@ fn has_known_posix(raw: &str) -> bool {
     ]
     .iter()
     .any(|name| raw.contains(&format!("[:{name}:]")))
+}
+
+fn is_unknown_posix_class(raw: &str) -> bool {
+    raw.strip_prefix("[:")
+        .and_then(|value| value.strip_suffix(":]"))
+        .is_some_and(|name| {
+            !name.contains("][:")
+                && ![
+                    "alnum", "alpha", "ascii", "blank", "cntrl", "digit", "graph", "lower",
+                    "print", "punct", "space", "upper", "word", "xdigit",
+                ]
+                .contains(&name)
+        })
 }
 
 fn class_has_magic(raw: &str) -> bool {

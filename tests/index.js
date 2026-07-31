@@ -22,6 +22,9 @@ const optionArgs = options => {
   if (typeof options.literalBrackets === 'boolean') {
     args.push('--literal-brackets', String(options.literalBrackets))
   }
+  if (Number.isSafeInteger(options.maxLength) && options.maxLength >= 0) {
+    args.push('--max-length', String(options.maxLength))
+  }
   return args
 }
 
