@@ -23,9 +23,9 @@ select the wrong files in a build, test, or packaging pipeline.
 
 The port covers scanning and matching; literals, stars, qmarks and globstars;
 braces and ranges; brackets and POSIX classes; dotfile rules; path negation;
-Windows and POSIX separators; captures, lookarounds and backreferences; all
-five extglob operators; Bash and minimatch compatibility matrices; callbacks
-and ignore/format hooks; and malicious-pattern safeguards.
+Windows and POSIX separators; generated-regex captures, lookarounds and
+backreferences; all five extglob operators; Bash and minimatch compatibility
+matrices; callbacks and ignore/format hooks; and malicious-pattern safeguards.
 
 ## Judge it in 60 seconds
 
@@ -39,7 +39,7 @@ and ignore/format hooks; and malicious-pattern safeguards.
 
 ## Reproduce it
 
-Requirements: Rust 1.85 or newer, Node.js 22, and Git.
+Requirements: Rust 1.85 or newer, Node.js 24 or newer, and Git.
 
 ```sh
 npm ci
