@@ -381,7 +381,12 @@ impl<'a> Compiler<'a> {
                     let branches = split_top_level(body, '|');
                     let mut compiled = Vec::with_capacity(branches.len());
                     for branch in branches {
-                        compiled.push(self.compile(branch, segment_start)?);
+                        let mut compiled_branch = self.compile(branch, false)?;
+                        if value == '!' && end + 1 < chars.len() && branch.starts_with(&['!', '('])
+                        {
+                            compiled_branch = compiled_branch.replacen("(?:/|$)", "", 1);
+                        }
+                        compiled.push(compiled_branch);
                     }
                     let alternatives = compiled.join("|");
                     let negative_suffix = if value == '!' && end + 1 < chars.len() {
@@ -400,8 +405,8 @@ impl<'a> Compiler<'a> {
                         }
                         _ => unreachable!(),
                     };
-                    if segment_start && !self.options.dot && value != '!' {
-                        output.push_str(r"(?!\.)");
+                    if segment_start && matches!(value, '?' | '*' | '+') {
+                        output.push_str(r"(?=.)");
                     }
                     output.push_str(&expression);
                     segment_start = false;
@@ -421,6 +426,9 @@ impl<'a> Compiler<'a> {
                 }
                 let mut end = index + 1;
                 while chars.get(end) == Some(&'*') {
+                    if !self.options.noextglob && chars.get(end + 1) == Some(&'(') {
+                        break;
+                    }
                     end += 1;
                 }
                 let followed_by_extglob =
