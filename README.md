@@ -15,9 +15,11 @@ crate forbids unsafe code; implementation lands in small, auditable slices.
 
 ## Proof status
 
-- Upstream scanner port: complete
-- Unchanged upstream `api.scan.js`: **40/40 passing** through a thin
-  JavaScript-to-Rust process adapter
+- Upstream scanner and core glob compiler/matcher: implemented in safe Rust
+- Unchanged upstream proof: **251/251 passing** across 15 original test files
+- Covered behavior includes literals, stars, question marks, globstars,
+  braces, brackets, dotfiles, negation, POSIX classes, Windows/POSIX paths,
+  strict syntax errors, special characters, and option aliases
 - Frozen upstream test snapshot: 38 files, verified against canonical SHA-256
   hashes before every JavaScript proof run
 
@@ -28,5 +30,7 @@ npm ci
 npm test
 ```
 
-The adapter contains no glob or scanner logic. It only serializes arguments,
-invokes the native Rust CLI, and reconstructs the JavaScript-shaped result.
+The adapter contains no glob or scanner logic. It keeps one native Rust
+process alive, serializes synchronous calls, and reconstructs the
+JavaScript-shaped API result. Rust-generated regex sources are used for the
+upstream `parse` and `makeRe` API checks.

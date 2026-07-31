@@ -2,8 +2,9 @@
   "name": "picomatch-mortis-proof-harness",
   "private": true,
   "scripts": {
-    "test": "node scripts/verify-original.js && cargo test && npm run test:scan",
-    "test:scan": "cargo build && mocha tests/original/api.scan.js"
+    "test": "node scripts/verify-original.js && cargo test && npm run test:upstream",
+    "test:scan": "cargo build && mocha tests/original/api.scan.js",
+    "test:upstream": "cargo build && mocha tests/original/api.scan.js tests/original/non-globs.js tests/original/qmarks.js tests/original/stars.js tests/original/braces.js tests/original/brackets.js tests/original/dotfiles.js tests/original/globstars.js tests/original/negation.js tests/original/posix-classes.js tests/original/slashes-posix.js tests/original/slashes-windows.js tests/original/special-characters.js tests/original/options.noglobstar.js tests/original/options.noextglob.js"
   },
   "devDependencies": {
     "mocha": "10.4.0"
