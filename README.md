@@ -9,7 +9,7 @@ Port Mortem 2026 pool repository.
 - Language pair: JavaScript to Rust
 - Kickoff: 2026-07-31 18:00 UTC
 - Upstream commit: `4f41a8edade7a5ab19832f7b40ecce46b288767f`
-- Upstream scope: 2,444 JavaScript source lines and 37 test files
+- Upstream scope: 2,444 JavaScript source lines and 36 executable test suites
 - Goal: full glob behavior proved through unchanged upstream tests
 
 This repository and every port commit were created after kickoff. The Rust
@@ -18,14 +18,15 @@ crate forbids unsafe code; implementation lands in small, auditable slices.
 ## Proof status
 
 - Upstream scanner and core glob compiler/matcher: implemented in safe Rust
-- Unchanged upstream proof: **1,966/1,966 passing** across 35 of 36 original
-  test files
+- Unchanged upstream proof: **1,977/1,977 passing** across all 36 original
+  executable test suites
 - Covered behavior includes literals, stars, question marks, globstars,
   braces, brackets, dotfiles, negation, POSIX classes, Windows/POSIX paths,
   Bash and minimatch compatibility, regex features, the complete Bash,
   minimatch, and core extglob matrices,
-  callbacks, ignore/format hooks, configurable input limits, malicious-pattern
-  regressions, strict syntax errors, special characters, and option aliases
+  callbacks, ignore/format hooks, configurable input and extglob-recursion
+  limits, malicious-pattern regressions, strict syntax errors, special
+  characters, and option aliases
 - Frozen upstream test snapshot: 38 files, verified against canonical SHA-256
   hashes before every JavaScript proof run
 

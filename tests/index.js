@@ -16,6 +16,7 @@ const optionArgs = options => {
     ['keepQuotes', '--keep-quotes'], ['strictBrackets', '--strict-brackets'],
     ['regex', '--regex'],
     ['unescape', '--unescape'],
+    ['capture', '--capture'],
   ]) {
     if (options[name] === true && !args.includes(flag)) args.push(flag)
   }
@@ -24,6 +25,11 @@ const optionArgs = options => {
   }
   if (Number.isSafeInteger(options.maxLength) && options.maxLength >= 0) {
     args.push('--max-length', String(options.maxLength))
+  }
+  if (options.maxExtglobRecursion === false) {
+    args.push('--unbounded-extglob-recursion')
+  } else if (Number.isSafeInteger(options.maxExtglobRecursion) && options.maxExtglobRecursion >= 0) {
+    args.push('--max-extglob-recursion', String(options.maxExtglobRecursion))
   }
   return args
 }

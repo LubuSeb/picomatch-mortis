@@ -25,6 +25,9 @@ pub struct GlobOptions {
     pub regex: bool,
     pub unescape: bool,
     pub max_length: Option<usize>,
+    pub max_extglob_recursion: Option<usize>,
+    pub unbounded_extglob_recursion: bool,
+    pub capture: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -395,6 +398,39 @@ impl<'a> Compiler<'a> {
             {
                 if let Some(end) = find_closing(chars, index + 1, '(', ')') {
                     let body = &chars[index + 2..end];
+                    if !self.options.unbounded_extglob_recursion && matches!(value, '+' | '*') {
+                        if let Some(characters) = star_only_characters(body) {
+                            if segment_start {
+                                output.push_str("(?=.)");
+                            }
+                            let repeated = if characters.len() == 1 {
+                                format!("{}*", escape_regex(&characters[0].to_string()))
+                            } else {
+                                format!("[{}]*", escape_class_characters(&characters))
+                            };
+                            if self.options.capture {
+                                output.push_str(&format!("({repeated})"));
+                            } else {
+                                output.push_str(&repeated);
+                            }
+                            segment_start = false;
+                            self.trailing_magic = false;
+                            index = end + 1;
+                            continue;
+                        }
+
+                        let allowed_depth = self.options.max_extglob_recursion.unwrap_or(0);
+                        if has_ambiguous_repeated_alternation(body)
+                            || repeated_extglob_depth(body) > allowed_depth
+                        {
+                            let literal: String = chars[index..=end].iter().collect();
+                            output.push_str(&escape_regex(&literal));
+                            segment_start = false;
+                            self.trailing_magic = false;
+                            index = end + 1;
+                            continue;
+                        }
+                    }
                     if value == '!' {
                         if let Some((inner_depth, literal)) = nested_negative_literal(body) {
                             let total_depth = inner_depth + 1;
@@ -443,7 +479,7 @@ impl<'a> Compiler<'a> {
                         String::new()
                     };
                     let expression = match value {
-                        '@' => format!("(?:{alternatives})"),
+                        '@' => format!("({alternatives})"),
                         '?' => format!("(?:{alternatives})?"),
                         '+' => format!("(?:{alternatives})+"),
                         '*' => format!("(?:{alternatives})*"),
@@ -698,6 +734,92 @@ fn escape_regex(value: &str) -> String {
         output.push(character);
     }
     output
+}
+
+fn star_only_characters(chars: &[char]) -> Option<Vec<char>> {
+    let mut characters = Vec::new();
+    let mut saw_star_extglob = false;
+    for branch in split_top_level(chars, '|') {
+        if branch.len() == 1 && !is_regex_syntax(branch[0]) && branch[0] != '/' {
+            if !characters.contains(&branch[0]) {
+                characters.push(branch[0]);
+            }
+            continue;
+        }
+
+        let mut index = 0usize;
+        let mut found = false;
+        while index < branch.len() {
+            if branch.get(index) != Some(&'*') || branch.get(index + 1) != Some(&'(') {
+                return None;
+            }
+            let end = find_closing(branch, index + 1, '(', ')')?;
+            let inner = &branch[index + 2..end];
+            if inner.len() != 1 || is_regex_syntax(inner[0]) || inner[0] == '/' {
+                return None;
+            }
+            if !characters.contains(&inner[0]) {
+                characters.push(inner[0]);
+            }
+            saw_star_extglob = true;
+            found = true;
+            index = end + 1;
+        }
+        if !found {
+            return None;
+        }
+    }
+    (!characters.is_empty() && saw_star_extglob).then_some(characters)
+}
+
+fn escape_class_characters(characters: &[char]) -> String {
+    let mut output = String::new();
+    for &character in characters {
+        if matches!(character, '\\' | ']' | '^' | '-') {
+            output.push('\\');
+        }
+        output.push(character);
+    }
+    output
+}
+
+fn has_ambiguous_repeated_alternation(chars: &[char]) -> bool {
+    let branches = split_top_level(chars, '|');
+    if branches.len() < 2 {
+        return false;
+    }
+    if branches.iter().all(|branch| {
+        !branch.is_empty()
+            && branch
+                .iter()
+                .all(|character| matches!(character, '*' | '?'))
+    }) {
+        return true;
+    }
+    let values: Vec<String> = branches
+        .iter()
+        .map(|branch| branch.iter().collect())
+        .collect();
+    values.iter().enumerate().any(|(left_index, left)| {
+        values.iter().enumerate().any(|(right_index, right)| {
+            if left_index == right_index || left.is_empty() || right.len() <= left.len() {
+                return false;
+            }
+            right.len() % left.len() == 0 && left.repeat(right.len() / left.len()) == *right
+        })
+    })
+}
+
+fn repeated_extglob_depth(chars: &[char]) -> usize {
+    if chars.len() >= 3
+        && matches!(chars[0], '+' | '*')
+        && chars[1] == '('
+        && find_closing(chars, 1, '(', ')') == Some(chars.len() - 1)
+    {
+        1 + repeated_extglob_depth(&chars[2..chars.len() - 1])
+    } else {
+        0
+    }
 }
 
 fn nested_negative_literal(mut chars: &[char]) -> Option<(usize, &[char])> {

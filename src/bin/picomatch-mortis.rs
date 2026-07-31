@@ -49,6 +49,8 @@ fn run_command(args: &mut Vec<String>) -> Result<String, String> {
 fn run_glob_command(args: &mut Vec<String>) -> Result<String, String> {
     let literal_brackets = take_value(args, "--literal-brackets").map(|value| value == "true");
     let max_length = take_value(args, "--max-length").and_then(|value| value.parse().ok());
+    let max_extglob_recursion =
+        take_value(args, "--max-extglob-recursion").and_then(|value| value.parse().ok());
     let options = GlobOptions {
         windows: take_flag(args, "--windows"),
         dot: take_flag(args, "--dot"),
@@ -68,6 +70,9 @@ fn run_glob_command(args: &mut Vec<String>) -> Result<String, String> {
         regex: take_flag(args, "--regex"),
         unescape: take_flag(args, "--unescape"),
         max_length,
+        max_extglob_recursion,
+        unbounded_extglob_recursion: take_flag(args, "--unbounded-extglob-recursion"),
+        capture: take_flag(args, "--capture"),
     };
     match args.first().map(String::as_str) {
         Some("is-match") if args.len() == 3 => is_match(&args[2], &args[1], options)
