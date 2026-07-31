@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "test": "node scripts/verify-original.js && cargo test && npm run test:upstream",
+    "demo": "cargo build --quiet && node scripts/demo.js",
+    "bench": "cargo build --release --quiet && node scripts/benchmark.js",
     "test:scan": "cargo build && mocha tests/original/api.scan.js",
     "test:upstream": "cargo build && mocha tests/original/api.scan.js tests/original/non-globs.js tests/original/qmarks.js tests/original/stars.js tests/original/braces.js tests/original/brackets.js tests/original/dotfiles.js tests/original/globstars.js tests/original/negation.js tests/original/posix-classes.js tests/original/slashes-posix.js tests/original/slashes-windows.js tests/original/special-characters.js tests/original/options.noglobstar.js tests/original/options.noextglob.js tests/original/options.js tests/original/options.format.js tests/original/options.ignore.js tests/original/options.onMatch.js tests/original/options.expandRange.js tests/original/dots-invalid.js tests/original/issue-related.js tests/original/wildmat.js tests/original/minimatch.js tests/original/api.posix.js tests/original/api.picomatch.js tests/original/regex-features.js tests/original/parens.js tests/original/bash.js tests/original/bash.spec.js tests/original/malicious.js tests/original/extglobs-temp.js tests/original/extglobs.js tests/original/extglobs-bash.js tests/original/extglobs-minimatch.js tests/original/options.maxExtglobRecursion.js"
   },
