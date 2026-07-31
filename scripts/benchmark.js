@@ -15,7 +15,7 @@ const pm = require('../tests')
 const cases = [
   ['src/parser/glob.rs', 'src/**/*.rs'],
   ['packages/core/index.test.js', '**/!(*.test).js'],
-  ['release-042.txt', 'release-{001..100}.txt'],
+  ['release-042.txt', 'release-{0..9}{0..9}{0..9}.txt'],
   ['foo/bar/baz.jsx', 'foo/bar/**/*.+(js|jsx)'],
 ]
 

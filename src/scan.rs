@@ -508,7 +508,18 @@ pub fn scan(input: &str, options: ScanOptions) -> ScanState {
         state.parts = Some(parts);
     }
 
+    state.start = utf16_index(input, state.start);
+    if let Some(slashes) = &mut state.slashes {
+        for slash in slashes {
+            *slash = utf16_index(input, *slash);
+        }
+    }
+
     state
+}
+
+fn utf16_index(input: &str, byte_index: usize) -> usize {
+    input[..byte_index].encode_utf16().count()
 }
 
 #[cfg(test)]
@@ -571,5 +582,28 @@ mod tests {
             },
         );
         assert_eq!(state.base, "path/foo[a\\/]");
+    }
+
+    #[test]
+    fn reports_javascript_utf16_indexes() {
+        let accented = scan(
+            "é/*.js",
+            ScanOptions {
+                parts: true,
+                tokens: true,
+                ..ScanOptions::default()
+            },
+        );
+        assert_eq!(accented.slashes, Some(vec![1]));
+
+        let astral = scan(
+            "😀/*.js",
+            ScanOptions {
+                parts: true,
+                tokens: true,
+                ..ScanOptions::default()
+            },
+        );
+        assert_eq!(astral.slashes, Some(vec![2]));
     }
 }

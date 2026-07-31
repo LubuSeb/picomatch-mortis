@@ -3,11 +3,13 @@ use std::fmt;
 use regress::{Flags, Regex};
 
 const MAX_LENGTH: usize = 1024 * 64;
+const MAX_NESTING: usize = 256;
 
 /// Options shared with Picomatch's matching API.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct GlobOptions {
     pub windows: bool,
+    pub posix: bool,
     pub dot: bool,
     pub nocase: bool,
     pub contains: bool,
@@ -48,7 +50,7 @@ pub struct GlobPattern {
     source: String,
     regex: Regex,
     options: GlobOptions,
-    negated: bool,
+    original_pattern: String,
     has_globstar: bool,
     preserve_double_slash: bool,
 }
@@ -62,11 +64,16 @@ pub struct ParseToken {
 
 impl GlobPattern {
     pub fn new(pattern: &str, options: GlobOptions) -> Result<Self, GlobError> {
+        if pattern.is_empty() {
+            return Err(GlobError(
+                "Expected pattern to be a non-empty string".to_owned(),
+            ));
+        }
         let max_length = options.max_length.unwrap_or(MAX_LENGTH);
-        if pattern.len() > max_length {
+        let pattern_length = pattern.encode_utf16().count();
+        if pattern_length > max_length {
             return Err(GlobError(format!(
-                "Input length: {}, exceeds maximum allowed length: {max_length}",
-                pattern.len()
+                "Input length: {pattern_length}, exceeds maximum allowed length: {max_length}",
             )));
         }
 
@@ -74,7 +81,7 @@ impl GlobPattern {
         let mut negated = false;
         if !options.nonegate {
             let mut count = 0;
-            while value.starts_with('!') && !value.starts_with("!(") {
+            while value.starts_with('!') && (options.noextglob || !value.starts_with("!(")) {
                 count += 1;
                 value = &value[1..];
             }
@@ -89,19 +96,48 @@ impl GlobPattern {
             "**/**" | "**/**/**" => "**",
             _ => value,
         };
+        let collapsed_globstars;
+        if !options.noglobstar {
+            collapsed_globstars = collapse_adjacent_globstars(value);
+            if let Some(collapsed) = &collapsed_globstars {
+                value = collapsed;
+            }
+        }
         let chars: Vec<char> = value.chars().collect();
+        validate_nesting(&chars)?;
         if options.strict_brackets {
             validate_brackets(&chars)?;
         }
         let mut compiler = Compiler::new(&options, false);
         let body = compiler.compile(&chars, true)?;
-        let optional_slash = !options.strict_slashes && compiler.trailing_magic;
-        let source = if options.contains {
+        let contains_negation_body = if negated && options.contains && value == "**" {
+            strip_leading_segment_guard(&body, options.dot)
+        } else {
+            &body
+        };
+        let optional_slash = !options.strict_slashes
+            && (compiler.trailing_magic || final_segment_starts_with_star_dot(&chars))
+            && !uses_simple_fastpath_without_trailing_slash(&chars);
+        let positive_source = if options.contains {
             format!("(?:{body})")
         } else if optional_slash {
             format!(r"^(?:{body})\/?$")
         } else {
             format!("^(?:{body})$")
+        };
+        let source = if negated {
+            if options.contains {
+                format!("^(?!(?:{contains_negation_body})).*$")
+            } else {
+                format!("^(?!{positive_source}).*$")
+            }
+        } else {
+            positive_source
+        };
+        let source = if options.windows {
+            windows_regex_source(&source)
+        } else {
+            source
         };
         // Picomatch exposes a JavaScript-compatible source string, where a
         // negated class can include `/`. Native matching still has to enforce
@@ -109,18 +145,33 @@ impl GlobPattern {
         // also excludes path separators from negated classes.
         let mut match_compiler = Compiler::new(&options, true);
         let match_body = match_compiler.compile(&chars, true)?;
-        let regex_source = if options.contains {
+        let match_contains_negation_body = if negated && options.contains && value == "**" {
+            strip_leading_segment_guard(&match_body, options.dot)
+        } else {
+            &match_body
+        };
+        let positive_regex_source = if options.contains {
             format!("(?:{match_body})")
         } else if optional_slash {
             format!(r"^(?:{match_body})\/?$")
         } else {
             format!("^(?:{match_body})$")
         };
+        let regex_source = if negated {
+            if options.contains {
+                format!("^(?!(?:{match_contains_negation_body})).*$")
+            } else {
+                format!("^(?!{positive_regex_source}).*$")
+            }
+        } else {
+            positive_regex_source
+        };
         let flags = Flags {
             icase: options.nocase,
             ..Flags::default()
         };
-        let regex = Regex::with_flags(&regex_source, flags)
+        let execution_source = encode_non_bmp_for_ucs2(&regex_source);
+        let regex = Regex::with_flags(&execution_source, flags)
             .map_err(|error| GlobError(format!("Invalid generated regex: {error}")))?;
 
         Ok(Self {
@@ -128,7 +179,7 @@ impl GlobPattern {
             source,
             regex,
             options,
-            negated,
+            original_pattern: pattern.to_owned(),
             has_globstar: value.contains("**"),
             preserve_double_slash: value.starts_with("//"),
         })
@@ -143,6 +194,12 @@ impl GlobPattern {
     }
 
     pub fn is_match(&self, input: &str) -> bool {
+        if input.is_empty() {
+            return false;
+        }
+        if !self.options.capture && input == self.original_pattern {
+            return true;
+        }
         let normalized;
         let mut value = input;
         if self.options.windows && input.contains('\\') {
@@ -164,7 +221,12 @@ impl GlobPattern {
                 .find(|part| !part.is_empty())
                 .unwrap_or("");
         }
-        self.regex.find(value).is_some() ^ self.negated
+        if value.is_ascii() {
+            self.regex.find_ascii(value).is_some()
+        } else {
+            let utf16: Vec<u16> = value.encode_utf16().collect();
+            self.regex.find_from_ucs2(&utf16, 0).next().is_some()
+        }
     }
 }
 
@@ -484,15 +546,33 @@ impl<'a> Compiler<'a> {
                         '+' => format!("(?:{alternatives})+"),
                         '*' => format!("(?:{alternatives})*"),
                         '!' => {
-                            let consume = if body.contains(&'/') { ".*" } else { "[^/]*" };
-                            let boundary = if end + 1 < chars.len() { "" } else { "(?:/|$)" };
+                            let consume = if self.options.bash {
+                                if self.options.dot {
+                                    r"(?:(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?)"
+                                } else {
+                                    r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                                }
+                            } else if body.contains(&'/') {
+                                ".*"
+                            } else {
+                                "[^/]*"
+                            };
+                            let boundary = if end + 1 < chars.len() {
+                                ""
+                            } else if self.options.bash {
+                                "$"
+                            } else {
+                                "(?:/|$)"
+                            };
                             format!(
                                 "(?:(?!(?:{alternatives}){negative_suffix}{boundary}){consume})"
                             )
                         }
                         _ => unreachable!(),
                     };
-                    if segment_start && matches!(value, '?' | '*' | '+') {
+                    if segment_start
+                        && (matches!(value, '?' | '*' | '+') || (value == '!' && index == 0))
+                    {
                         output.push_str(r"(?=.)");
                     }
                     output.push_str(&expression);
@@ -518,19 +598,45 @@ impl<'a> Compiler<'a> {
                     }
                     end += 1;
                 }
+                if self.options.noglobstar
+                    && end - index == 2
+                    && index == 0
+                    && chars.get(end) == Some(&'/')
+                    && chars.get(end + 1) == Some(&'*')
+                {
+                    let guard = self.segment_guard();
+                    let wildcard = if self.options.bash { ".*?" } else { "[^/]*?" };
+                    output.push_str(&format!("(?:{guard}{wildcard}\\/)?"));
+                    index = end + 1;
+                    segment_start = true;
+                    self.trailing_magic = false;
+                    continue;
+                }
                 let followed_by_extglob =
                     matches!(chars.get(end), Some('?' | '*' | '+' | '@' | '!'))
                         && chars.get(end + 1) == Some(&'(');
                 let followed_by_group = chars.get(end) == Some(&'{') || followed_by_extglob;
-                let globstar = end - index > 1
+                let globstar = end - index == 2
                     && !self.options.noglobstar
-                    && segment_start
-                    && (end == chars.len() || chars.get(end) == Some(&'/') || followed_by_group);
+                    && ((segment_start
+                        && (end == chars.len()
+                            || chars.get(end) == Some(&'/')
+                            || followed_by_group))
+                        || (index > 0 && chars.get(index - 1) == Some(&')') && end == chars.len()));
                 if globstar && segment_start && chars.get(end) == Some(&'/') {
                     if index == 0 {
-                        output.push_str(r"(?:\/)?");
-                    }
-                    if self.options.dot {
+                        let traversal = if self.options.dot {
+                            r"(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?"
+                        } else {
+                            r"(?:(?!(?:^|\/)\.).)*?"
+                        };
+                        if chars.get(end + 1) == Some(&'*') {
+                            let guard = self.segment_guard();
+                            output.push_str(&format!(r"(?:{guard}{traversal}\/)?"));
+                        } else {
+                            output.push_str(&format!(r"(?:^|\/|(?:{traversal})\/)"));
+                        }
+                    } else if self.options.dot {
                         output.push_str(r"(?:(?!\.{1,2}(?:/|$))[^/]+\/)*");
                     } else {
                         output.push_str(r"(?:(?!\.)[^/]+\/)*");
@@ -538,10 +644,23 @@ impl<'a> Compiler<'a> {
                     index = end + 1;
                     segment_start = true;
                 } else if globstar && end == chars.len() {
-                    let body = if self.options.dot {
+                    let follows_extglob = index > 0 && chars.get(index - 1) == Some(&')');
+                    let body = if follows_extglob && self.options.bash {
+                        ".*?"
+                    } else if index == 0 && self.options.dot {
+                        r"(?:(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?)"
+                    } else if index == 0 {
+                        r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                    } else if follows_extglob && self.options.dot {
+                        r"(?:(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?)"
+                    } else if follows_extglob {
+                        r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                    } else if self.options.bash && self.options.dot {
+                        r"(?:(?:(?!(?:^|\/)\.{1,2}(?:\/|$)).)*?)"
+                    } else if self.options.bash {
+                        r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                    } else if self.options.dot {
                         r"(?:(?:(?!\.{1,2}(?:/|$))[^/]+(?:\/|$))|\/)*"
-                    } else if self.options.bash && has_explicit_dot_segment(&chars[..index]) {
-                        r"(?:(?:(?!\.)[^/]+(?:\/|$))|\/|\.[^/]+$)*"
                     } else {
                         r"(?:(?:(?!\.)[^/]+(?:\/|$))|\/)*"
                     };
@@ -553,10 +672,27 @@ impl<'a> Compiler<'a> {
                         && !self.inside_negative
                     {
                         output.truncate(output.len().saturating_sub(2));
-                        output.push_str(&format!(r"(?:\/{body})?"));
+                        let guard =
+                            if self.options.bash && has_explicit_dot_segment(&chars[..index]) {
+                                ""
+                            } else {
+                                self.segment_guard()
+                            };
+                        if self.options.contains {
+                            output.push_str(&format!(r"(?:\/{guard}{body}|$)"));
+                        } else {
+                            output.push_str(&format!(r"(?:\/{guard}{body})?"));
+                        }
                     } else {
                         if index == 0 {
-                            output.push_str(r"\/*");
+                            output.push_str(self.segment_guard());
+                        }
+                        if self.options.contains
+                            && self.options.strict_slashes
+                            && index > 0
+                            && chars.get(index - 1) == Some(&'/')
+                        {
+                            output.push_str(self.segment_guard());
                         }
                         output.push_str(body);
                     }
@@ -582,7 +718,18 @@ impl<'a> Compiler<'a> {
                     {
                         output.push_str(r"(?!\.{0,1}(?:/|$))");
                     }
-                    output.push_str(if self.options.bash { ".*?" } else { "[^/]*?" });
+                    output.push_str(if self.options.bash {
+                        if self.options.dot
+                            || segment_start
+                            || (index > 0 && chars.get(index - 1) == Some(&')'))
+                        {
+                            ".*?"
+                        } else {
+                            r"(?:(?:(?!(?:^|\/)\.).)*?)"
+                        }
+                    } else {
+                        "[^/]*?"
+                    });
                     index = end;
                     segment_start = false;
                 }
@@ -591,15 +738,7 @@ impl<'a> Compiler<'a> {
             }
 
             if value == '?' {
-                let follows_regex_group = index > 0
-                    && chars[index - 1] == ')'
-                    && chars[..index - 1]
-                        .iter()
-                        .rposition(|character| *character == '(')
-                        .is_some_and(|open| {
-                            chars.get(open + 1) == Some(&'?')
-                                && matches!(chars.get(open + 2), Some(':' | '=' | '!' | '<'))
-                        });
+                let follows_regex_group = index > 0 && chars[index - 1] == ')';
                 if follows_regex_group {
                     output.push('?');
                     segment_start = false;
@@ -644,7 +783,11 @@ impl<'a> Compiler<'a> {
                         index = end + 1;
                         continue;
                     }
-                    let translated = translate_class(&raw, self.exclude_slash_in_negated_classes);
+                    let translated = translate_class(
+                        &raw,
+                        self.exclude_slash_in_negated_classes,
+                        self.options.posix,
+                    );
                     let literal = format!(r"\[{}\]", escape_regex(&raw));
                     let class = if raw.starts_with(']') {
                         format!(r"[\{}]", translated)
@@ -655,6 +798,12 @@ impl<'a> Compiler<'a> {
                         output.push_str("(?=.)");
                     }
                     match self.options.literal_brackets {
+                        _ if has_known_posix(&raw)
+                            || raw.contains('-')
+                            || (self.options.posix && raw.starts_with('!')) =>
+                        {
+                            output.push_str(&class)
+                        }
                         Some(true) => output.push_str(&literal),
                         Some(false) => output.push_str(&class),
                         None if class_has_magic(&raw) => output.push_str(&class),
@@ -964,53 +1113,20 @@ fn split_top_level_sequence<'a>(chars: &'a [char], separator: &str) -> Vec<&'a [
 }
 
 fn compile_range(parts: &[&[char]]) -> Result<String, GlobError> {
-    let values: Vec<String> = parts.iter().map(|part| part.iter().collect()).collect();
-    let step = if values.len() == 3 {
-        values[2]
-            .parse::<i64>()
-            .ok()
-            .filter(|step| *step != 0)
-            .unwrap_or(1)
-    } else {
-        1
-    };
-    if let (Ok(start), Ok(end)) = (values[0].parse::<i64>(), values[1].parse::<i64>()) {
-        let direction = if start <= end {
-            step.abs()
-        } else {
-            -step.abs()
-        };
-        let mut current = start;
-        let mut entries = Vec::new();
-        while (direction > 0 && current <= end) || (direction < 0 && current >= end) {
-            entries.push(current.to_string());
-            if entries.len() > MAX_LENGTH {
-                return Err(GlobError("Brace range is too large".to_owned()));
-            }
-            current += direction;
-        }
-        return Ok(format!("(?:{})", entries.join("|")));
+    let mut values: Vec<String> = parts.iter().map(|part| part.iter().collect()).collect();
+    values.sort();
+    let candidate = format!("[{}]", values.join("-"));
+    if Regex::new(&candidate).is_ok() {
+        return Ok(candidate);
     }
-    let start: Vec<char> = values[0].chars().collect();
-    let end: Vec<char> = values[1].chars().collect();
-    if start.len() == 1 && end.len() == 1 {
-        let a = start[0] as i64;
-        let b = end[0] as i64;
-        let direction = if a <= b { step.abs() } else { -step.abs() };
-        let mut current = a;
-        let mut entries = Vec::new();
-        while (direction > 0 && current <= b) || (direction < 0 && current >= b) {
-            if let Some(value) = char::from_u32(current as u32) {
-                entries.push(escape_regex(&value.to_string()));
-            }
-            current += direction;
-        }
-        return Ok(format!("(?:{})", entries.join("|")));
-    }
-    Err(GlobError("Invalid brace range".to_owned()))
+    Ok(values
+        .iter()
+        .map(|value| escape_regex(value))
+        .collect::<Vec<_>>()
+        .join(".."))
 }
 
-fn translate_class(raw: &str, exclude_slash: bool) -> String {
+fn translate_class(raw: &str, exclude_slash: bool, posix: bool) -> String {
     let mut output = String::with_capacity(raw.len());
     let chars: Vec<_> = raw.chars().collect();
     for (index, character) in chars.iter().enumerate() {
@@ -1019,7 +1135,7 @@ fn translate_class(raw: &str, exclude_slash: bool) -> String {
         }
         output.push(*character);
     }
-    if output.starts_with('!') {
+    if posix && output.starts_with('!') {
         output.replace_range(..1, "^");
     }
     if exclude_slash && output.starts_with('^') && !output.contains('/') {
@@ -1089,10 +1205,126 @@ fn collapse_slashes(value: &str) -> String {
     output
 }
 
+fn collapse_adjacent_globstars(value: &str) -> Option<String> {
+    let mut segments = Vec::new();
+    let mut changed = false;
+    for segment in value.split('/') {
+        if segment == "**" && segments.last() == Some(&"**") {
+            changed = true;
+            continue;
+        }
+        segments.push(segment);
+    }
+    changed.then(|| segments.join("/"))
+}
+
 fn has_explicit_dot_segment(chars: &[char]) -> bool {
     chars.iter().enumerate().any(|(index, character)| {
         *character == '.' && (index == 0 || chars.get(index - 1) == Some(&'/'))
     })
+}
+
+fn validate_nesting(chars: &[char]) -> Result<(), GlobError> {
+    let mut depth = 0usize;
+    let mut escaped = false;
+    let mut quoted = false;
+    for &character in chars {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == '"' {
+            quoted = !quoted;
+            continue;
+        }
+        if quoted {
+            continue;
+        }
+        if matches!(character, '(' | '{') {
+            depth += 1;
+            if depth > MAX_NESTING {
+                return Err(GlobError(format!(
+                    "Pattern nesting exceeds the safe limit of {MAX_NESTING}"
+                )));
+            }
+        } else if matches!(character, ')' | '}') {
+            depth = depth.saturating_sub(1);
+        }
+    }
+    Ok(())
+}
+
+fn uses_simple_fastpath_without_trailing_slash(chars: &[char]) -> bool {
+    !chars.is_empty()
+        && !matches!(chars[0], '*' | '.')
+        && chars.iter().all(|character| {
+            !matches!(
+                character,
+                '/' | '\\' | '[' | ']' | '{' | '}' | '(' | ')' | '|' | '+' | '@' | '!'
+            )
+        })
+}
+
+fn final_segment_starts_with_star_dot(chars: &[char]) -> bool {
+    let start = chars
+        .iter()
+        .rposition(|character| *character == '/')
+        .map_or(0, |index| index + 1);
+    chars.get(start) == Some(&'*') && chars.get(start + 1) == Some(&'.')
+}
+
+fn strip_leading_segment_guard(body: &str, dot: bool) -> &str {
+    let guard = if dot {
+        r"(?!\.{1,2}(?:/|$))"
+    } else {
+        r"(?!\.)"
+    };
+    body.strip_prefix(guard).unwrap_or(body)
+}
+
+fn windows_regex_source(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index..].starts_with(&['[', '^', '/', ']']) {
+            output.push_str(r"[^\\/]");
+            index += 4;
+        } else if chars[index..].starts_with(&['\\', '/']) {
+            output.push_str(r"[\\/]");
+            index += 2;
+        } else if chars[index] == '/' {
+            output.push_str(r"[\\/]");
+            index += 1;
+        } else {
+            output.push(chars[index]);
+            index += 1;
+        }
+    }
+    output
+}
+
+fn encode_non_bmp_for_ucs2(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    for character in source.chars() {
+        let code = character as u32;
+        if code <= 0xffff {
+            output.push(character);
+        } else {
+            let scalar = code - 0x1_0000;
+            let high = 0xd800 + (scalar >> 10);
+            let low = 0xdc00 + (scalar & 0x3ff);
+            // Keep the two JavaScript code units separate. Regress otherwise
+            // folds adjacent surrogate escapes back into one Unicode scalar,
+            // while non-`u` JavaScript regexes observe two UTF-16 units.
+            output.push_str(&format!(r"\u{high:04x}(?:)\u{low:04x}"));
+        }
+    }
+    output
 }
 
 fn validate_brackets(chars: &[char]) -> Result<(), GlobError> {
@@ -1176,6 +1408,19 @@ mod tests {
         assert!(matches("file3", "file[0-9]"));
         assert!(matches("foo.js", "@(foo|bar).js"));
         assert!(!matches("baz.js", "@(foo|bar).js"));
+        assert!(matches("ab/b/_", "@(a|b)**"));
+        assert!(matches("a/", "a/!(b)"));
+        assert!(
+            is_match(
+                "a",
+                "[a-c]",
+                GlobOptions {
+                    literal_brackets: Some(true),
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -1200,5 +1445,155 @@ mod tests {
     fn collapses_long_even_escape_runs() {
         let pattern = format!("{}A", "\\".repeat(65_500));
         assert!(matches(r"\A", &pattern));
+    }
+
+    #[test]
+    fn matches_javascript_utf16_code_units() {
+        assert!(!matches("😀", "?"));
+        assert!(matches("😀", "??"));
+        let emoji = '\u{1f600}';
+        assert!(matches(&format!("{emoji}x"), &format!("{emoji}*")));
+        assert!(
+            is_match(
+                &format!("x/{emoji}/y"),
+                &format!("{{{emoji},foo}}"),
+                GlobOptions {
+                    contains: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_empty_inputs_and_patterns() {
+        assert!(!matches("", "**"));
+        assert!(GlobPattern::new("", GlobOptions::default()).is_err());
+    }
+
+    #[test]
+    fn respects_posix_class_negation_mode() {
+        assert!(matches("a", "[!a]"));
+        assert!(!matches("b", "[!a]"));
+        let options = GlobOptions {
+            posix: true,
+            ..GlobOptions::default()
+        };
+        assert!(!is_match("a", "[!a]", options.clone()).unwrap());
+        assert!(is_match("b", "[!a]", options).unwrap());
+        assert!(
+            is_match(
+                ".",
+                "[!ab]",
+                GlobOptions {
+                    posix: true,
+                    literal_brackets: Some(true),
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn preserves_fastpath_and_repeated_globstar_semantics() {
+        assert!(!matches("a/", "a*"));
+        assert!(matches("a/", "*"));
+        assert!(!matches("a/b", "****"));
+        assert!(matches("a", "a/**/**"));
+        let bash = GlobOptions {
+            bash: true,
+            ..GlobOptions::default()
+        };
+        assert!(is_match("a/.hidden", "*", bash.clone()).unwrap());
+        assert!(!is_match("a/.hidden", "a*", bash.clone()).unwrap());
+        assert!(is_match("a/b/.js/c.txt", "**/*", bash).unwrap());
+        assert!(
+            !is_match(
+                "./.b-c/xb9b",
+                "!(js|c)",
+                GlobOptions {
+                    bash: true,
+                    dot: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(
+            is_match(
+                "file.b/",
+                "**/*.b",
+                GlobOptions {
+                    noglobstar: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(matches("-.-9xb//xb.c", "**/*.c"));
+    }
+
+    #[test]
+    fn contains_negation_checks_the_prefix() {
+        let options = GlobOptions {
+            contains: true,
+            ..GlobOptions::default()
+        };
+        assert!(is_match("ba", "!a", options.clone()).unwrap());
+        assert!(!is_match("ab", "!a", options.clone()).unwrap());
+        assert!(!is_match("ab", "a/**", options).unwrap());
+        assert!(
+            !is_match(
+                "ba",
+                "**/a",
+                GlobOptions {
+                    contains: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(
+            !is_match(
+                "a",
+                "**/a",
+                GlobOptions {
+                    noglobstar: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+        assert!(
+            !is_match(
+                "b",
+                "!(b|c)",
+                GlobOptions {
+                    contains: true,
+                    ..GlobOptions::default()
+                }
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_nesting_and_range_overflow() {
+        let nested = format!(
+            "{}a{}",
+            "{".repeat(MAX_NESTING + 1),
+            "}".repeat(MAX_NESTING + 1)
+        );
+        assert!(GlobPattern::new(&nested, GlobOptions::default()).is_err());
+        assert!(
+            GlobPattern::new(
+                "{9223372036854775806..9223372036854775807}",
+                GlobOptions::default()
+            )
+            .is_ok()
+        );
+        assert!(GlobPattern::new("{1..2..-9223372036854775808}", GlobOptions::default()).is_ok());
     }
 }

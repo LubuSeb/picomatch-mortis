@@ -44,6 +44,25 @@ module.exports = (input, options = {}) => {
     state.slashes = fields[12] ? fields[12].split(',').map(Number) : []
     state.parts = fields[13] ? fields[13].split(',').map(decode) : []
   }
+  if (options.tokens) {
+    state.maxDepth = fields[14] === 'inf' ? Infinity : Number(fields[14])
+    state.tokens = fields[15] ? fields[15].split(',').map(entry => {
+      const [value, depth, isGlob, isPrefix, isGlobstar, isBrace, isBracket, isExtglob, negated, backslashes] = entry.split(':')
+      const token = {
+        value: decode(value),
+        depth: depth === 'inf' ? Infinity : Number(depth),
+        isGlob: isGlob === 'true',
+      }
+      for (const [name, flag] of [
+        ['isPrefix', isPrefix], ['isGlobstar', isGlobstar], ['isBrace', isBrace],
+        ['isBracket', isBracket], ['isExtglob', isExtglob], ['negated', negated],
+        ['backslashes', backslashes],
+      ]) {
+        if (flag === 'true') token[name] = true
+      }
+      return token
+    }) : []
+  }
 
   return state
 }

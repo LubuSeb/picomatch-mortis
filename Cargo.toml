@@ -19,4 +19,4 @@ name = "picomatch-mortis"
 path = "src/bin/picomatch-mortis.rs"
 
 [dependencies]
-regress = { version = "=0.10.4", features = ["prohibit-unsafe"] }
+regress = { version = "=0.10.4", features = ["prohibit-unsafe", "utf16"] }

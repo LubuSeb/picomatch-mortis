@@ -74,3 +74,39 @@ capture behavior.
 
 **Consequence:** The final malicious and recursion-hardening suites pass while
 ordinary Bash/minimatch extglobs remain behaviorally intact.
+
+## D006 -- Add direct provenance and differential proof
+
+**Time:** 2026-07-31, after full frozen-suite parity
+
+**Decision:** Fetch and compare the exact upstream test tree in CI, and add a
+four-seed 80,000-case bounded differential harness against that pinned commit.
+
+**Why:** A repository-owned checksum detects accidental edits but does not, by
+itself, prove where files came from. Likewise, a frozen suite can miss valid
+input combinations even when every included assertion passes. The organizer
+confirmed in Discord that a deterministic original-versus-port harness was
+the intended fuzzing evidence.
+
+**Consequence:** The first fixed-seed run exposed 87 real edge-case
+discrepancies. Adversarial review broadened the grammar and added three seeds,
+exposing more Unicode and composed-glob gaps. All four current seeds report
+zero after the fixes. CI now checks both provenance and differential behavior.
+
+## D007 -- Treat independent agents as adversarial reviewers
+
+**Time:** 2026-07-31, final evidence pass
+
+**Decision:** Use separate judge, Rust, provenance, red-team, and presentation
+reviews after implementation, then verify their concerns with repository
+commands before changing claims.
+
+**Why:** A single builder is poorly positioned to notice its own credibility
+gaps. Independent critiques consistently identified the self-trusted hash,
+bridge-dominated benchmark, missing differential proof, and weak judge-facing
+story as the largest avoidable risks.
+
+**Consequence:** The artifact gained direct upstream verification, a native
+compiled-once benchmark, explicit bridge failure bounds, a claim-to-evidence
+table, and a short demo runbook. Agent opinion is documented as process, not
+presented as proof.

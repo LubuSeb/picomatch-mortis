@@ -4,11 +4,23 @@
   "scripts": {
     "test": "node scripts/verify-original.js && cargo test && npm run test:upstream",
     "demo": "cargo build --quiet && node scripts/demo.js",
-    "bench": "cargo build --release --quiet && node scripts/benchmark.js",
+    "bench": "cargo run --release --quiet --example native-benchmark",
+    "bench:bridge": "cargo build --release --quiet && node scripts/benchmark.js",
+    "fuzz": "cargo build --quiet && node scripts/differential-fuzz.js",
+    "fuzz:ci": "cargo build --quiet && node scripts/differential-fuzz.js 20000 && node scripts/differential-fuzz.js 20000 1 && node scripts/differential-fuzz.js 20000 3735928559 && node scripts/differential-fuzz.js 20000 305419896",
+    "test:bridge-timeout": "node scripts/bridge-timeout-check.js",
+    "verify:upstream": "node scripts/verify-upstream.js",
     "test:scan": "cargo build && mocha tests/original/api.scan.js",
     "test:upstream": "cargo build && mocha --require tests/mocha-hooks.js tests/original/api.scan.js tests/original/non-globs.js tests/original/qmarks.js tests/original/stars.js tests/original/braces.js tests/original/brackets.js tests/original/dotfiles.js tests/original/globstars.js tests/original/negation.js tests/original/posix-classes.js tests/original/slashes-posix.js tests/original/slashes-windows.js tests/original/special-characters.js tests/original/options.noglobstar.js tests/original/options.noextglob.js tests/original/options.js tests/original/options.format.js tests/original/options.ignore.js tests/original/options.onMatch.js tests/original/options.expandRange.js tests/original/dots-invalid.js tests/original/issue-related.js tests/original/wildmat.js tests/original/minimatch.js tests/original/api.posix.js tests/original/api.picomatch.js tests/original/regex-features.js tests/original/parens.js tests/original/bash.js tests/original/bash.spec.js tests/original/malicious.js tests/original/extglobs-temp.js tests/original/extglobs.js tests/original/extglobs-bash.js tests/original/extglobs-minimatch.js tests/original/options.maxExtglobRecursion.js"
   },
   "devDependencies": {
-    "mocha": "10.4.0"
+    "fill-range": "7.1.1",
+    "mocha": "11.7.6",
+    "picomatch-reference": "https://github.com/micromatch/picomatch/archive/4f41a8edade7a5ab19832f7b40ecce46b288767f.tar.gz"
+  },
+  "overrides": {
+    "diff": "8.0.3",
+    "js-yaml": "5.2.2",
+    "serialize-javascript": "7.0.7"
   }
 }

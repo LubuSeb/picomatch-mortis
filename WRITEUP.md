@@ -1,4 +1,6 @@
-# Port Mortem 2026 write-up: Picomatch Mortis
+# I ported 1,977 observable promises: Picomatch Mortis
+
+*Port Mortem 2026, Track F -- JavaScript to Rust*
 
 ## The bet
 
@@ -16,13 +18,39 @@ backslashes behave the way they do.
 
 I pinned upstream commit `4f41a8e`, copied its test tree without edits, and
 recorded canonical LF-normalized SHA-256 hashes for all 38 files. `npm test`
-verifies those hashes before running anything else. This makes an accidental
-fixture edit fail loudly and makes the parity number independently auditable.
+verifies those hashes before running anything else. A second command fetches
+that exact commit, verifies that the manifest names its complete test tree,
+then byte-compares every normalized file. This makes an accidental fixture
+edit fail loudly and makes the parity number independently auditable instead
+of asking a judge to trust a repository-owned checksum.
 
 The first checkpoint implemented only the scanner and passed its original
 suite. The next implemented a narrow compiler and 251 tests. Each later commit
 expanded behavior and proof together until every executable upstream suite
 was included: 1,977 tests across 36 files.
+
+After that suite was green, I added a deterministic differential harness
+rather than treating the frozen corpus as the end of the proof. It generates
+bounded combinations of paths, extglobs, braces, classes, negation, platform
+modes, and option sets, then executes the exact upstream commit and this port
+on the same input. The first 50,000-case run exposed 87 discrepancies. They
+clustered around Bash-mode negative extglobs, POSIX classes with
+`literalBrackets`, optional slashes, and `contains` with terminal globstars.
+I fixed those semantics, then used an adversarial review to broaden the grammar
+with Unicode literals and composed glob forms and to add three alternate
+seeds. That second pass exposed more real gaps rather than letting a chosen
+seed become a comfort blanket. The current CI result is 80,000 comparisons
+across four fixed seeds with zero mismatches.
+
+| Discrepancy cluster | Representative failing case | Rust-side correction |
+| --- | --- | --- |
+| Bash negative extglobs | `!(b\|bar)` against a multi-segment path | Bash-aware consumption, dot guards, and end boundary |
+| POSIX classes plus `literalBrackets` | `[[:digit:]]` in `contains` mode | Preserve upstream's POSIX/range precedence |
+| `noglobstar` optional prefix | `**/*.b` against `file.b/` | Model the leading `**/` optional segment rule |
+| `contains` plus terminal globstar | `b/**` before a hidden segment | Require the segment guard before the terminal body |
+| Empty suffix match in negative extglob | `!(b\|c)` against `b` | Require a non-empty candidate at the search position |
+| JavaScript UTF-16 literals | Emoji inside braces and extglobs | Execute non-BMP literals as two non-`u` JavaScript code units |
+| Composed extglob and globstar | `@(a\|b)**` across path segments | Preserve context-specific globstar and Bash boundaries |
 
 The original tests still call a Picomatch-shaped JavaScript API. A thin adapter
 serializes calls to one persistent Rust process. It reconstructs JavaScript
@@ -42,6 +70,9 @@ in their text even though a glob matcher must not cross path boundaries.
 The compiler therefore emits two forms: an upstream-compatible public source
 and a private execution source with explicit slash exclusion. Both are made by
 Rust. This preserved exact API output without weakening native matching.
+For example, public character-class text may contain `[^a]` because callers
+inspect it, while the private matcher uses the equivalent slash-safe `[^a/]`
+so the same class cannot silently cross a path boundary.
 
 ### Extglobs are a grammar, not five substitutions
 
@@ -79,15 +110,32 @@ even backslash run. I added a native regression and kept CI on both platforms.
 This is why the final evidence is not just a local green line: the full suite,
 hash verification, formatting, and strict Clippy run on Ubuntu and Windows.
 
+## Using agents as critics, not evidence
+
+Once the implementation was green, I asked independent agent reviewers to
+score it as judges, audit the Rust boundary, verify test provenance, red-team
+the claims, and critique the demo. Their consensus was uncomfortable but
+useful: the frozen suite was strong, while a self-owned hash, an IPC-heavy
+benchmark, and no differential proof left avoidable credibility gaps.
+
+Those critiques changed the artifact. The provenance check now reaches the
+upstream commit directly; the benchmark compiles patterns once and calls the
+Rust library without bridge overhead; the differential harness became a CI
+gate; startup and request waits gained explicit failure bounds; and the README
+now maps each claim to a command. The agents proposed challenges, but the
+repository's reproducible outputs remain the evidence.
+
 ## Result and honest boundary
 
 The result is a safe Rust scanner and matcher with full frozen-suite parity,
-an incremental post-kickoff history, and a reproducible proof command. It is
-not a formal equivalence proof for every possible string. JavaScript callback
-invocation necessarily remains in the adapter, the crate uses a pinned
-ECMAScript regex dependency, and neither the Rust API nor CLI has been
-published as a stable package yet.
+zero mismatches in the four-seed 80,000-case differential run, an incremental
+post-kickoff history, and reproducible proof commands. It is not a formal
+equivalence proof for every possible string. JavaScript callback invocation
+necessarily remains in the adapter, the crate uses a pinned ECMAScript regex
+dependency, and neither the Rust API nor CLI has been published as a stable
+package yet.
 
 Those limits are visible by design. The claim is precise: every unchanged
-upstream executable test passes through the Rust implementation, on both
-major path platforms, with unsafe code forbidden.
+upstream executable test passes through the Rust implementation on both major
+path platforms, and the separate deterministic differential corpus currently
+finds no behavioral discrepancy, with unsafe code forbidden in this crate.

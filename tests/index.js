@@ -8,7 +8,7 @@ const optionArgs = options => {
   if (!options) return args
   if (typeof options.flags === 'string' && options.flags.includes('i')) args.push('--nocase')
   for (const [name, flag] of [
-    ['windows', '--windows'], ['dot', '--dot'], ['nocase', '--nocase'],
+    ['windows', '--windows'], ['posix', '--posix'], ['dot', '--dot'], ['nocase', '--nocase'],
     ['contains', '--contains'], ['nonegate', '--nonegate'], ['noextglob', '--noextglob'],
     ['noext', '--noext'], ['noglobstar', '--noglobstar'], ['nobrace', '--nobrace'],
     ['nobracket', '--nobracket'], ['strictSlashes', '--strict-slashes'], ['bash', '--bash'],
@@ -34,17 +34,35 @@ const optionArgs = options => {
   return args
 }
 
-const nativeMatch = (input, glob, options) => {
-  const matched = call([...optionArgs(options), 'is-match', glob, input]) === 'true'
+const expandRanges = (glob, options) => {
+  if (!options || typeof options.expandRange !== 'function') return glob
+  return glob.replace(/\{([^{}]+?)\.\.([^{}]+?)(?:\.\.([^{}]+?))?\}/g, (_, start, end, step) => {
+    return options.expandRange(start, end, ...(step === undefined ? [] : [step]), options)
+  })
+}
+
+const nativeMatch = (input, glob, options, originalInput = input) => {
+  const matched = call([
+    ...optionArgs(options), 'is-match', expandRanges(glob, options), input, originalInput,
+  ]) === 'true'
   return matched
 }
 
 const nativeOutput = (command, glob, options) => call([
-  ...optionArgs(options), command, glob,
+  ...optionArgs(options), command, expandRanges(glob, options),
 ])
 
-const picomatch = (glob, options = {}, returnState = false) => {
+const picomatch = function (glob, options, returnState = false) {
+  if (Array.isArray(glob)) {
+    const matchers = glob.map(pattern => picomatch(pattern, options, returnState))
+    return input => matchers.some(matcher => matcher(input))
+  }
   if (typeof glob !== 'string' || glob.length === 0) throw new TypeError('Expected pattern to be a non-empty string')
+  if (options && options.windows == null && process.platform === 'win32') {
+    options = { ...options, windows: true }
+  }
+  options ||= {}
+  nativeOutput('source', glob, options)
   const state = returnState ? {
     input: glob,
     negated: !options.nonegate && glob.startsWith('!') && !glob.startsWith('!('),
@@ -54,9 +72,9 @@ const picomatch = (glob, options = {}, returnState = false) => {
     if (typeof input !== 'string') throw new TypeError('Expected input to be a string')
     let output = typeof options.format === 'function' ? options.format(input) : input
     if (options.windows) output = output.replace(/\\/g, '/')
-    const matched = input === glob || nativeMatch(output, glob, options)
+    const matched = nativeMatch(output, glob, options, input)
     const ignored = matched && options.ignore
-      ? [].concat(options.ignore).some(pattern => nativeMatch(output, pattern, options))
+      ? [].concat(options.ignore).some(pattern => nativeMatch(output, pattern, options, input))
       : false
     const result = {
       glob,
@@ -80,16 +98,14 @@ picomatch.test = (input, regex) => {
   return { isMatch: Boolean(match), match, output: input }
 }
 picomatch.matchBase = (input, glob, options = {}) => nativeMatch(input, glob, { ...options, basename: true })
-picomatch.isMatch = (input, patterns, options = {}) => {
-  return [].concat(patterns).some(pattern => picomatch(pattern, options)(input))
+picomatch.isMatch = (input, patterns, options) => {
+  const normalized = options && options.windows == null ? { ...options, windows: false } : options
+  return [].concat(patterns).some(pattern => picomatch(pattern, normalized)(input))
 }
 picomatch.makeRe = (glob, options = {}) => {
   if (typeof glob !== 'string') throw new TypeError('Expected a non-empty string')
-  let source = nativeOutput('source', glob, options)
-  if (options.windows) {
-    source = source.replace(/\[\^\/\]|\\\/|\//g, value => value === '[^/]' ? '[^\\\\/]' : '[\\\\/]')
-  }
-  return new RegExp(source, options.nocase ? 'i' : '')
+  const source = nativeOutput('source', glob, options)
+  return new RegExp(source, options.flags || (options.nocase ? 'i' : ''))
 }
 picomatch.parse = (glob, options = {}) => {
   const encoded = nativeOutput('tokens', glob, options)
