@@ -18,10 +18,12 @@ crate forbids unsafe code; implementation lands in small, auditable slices.
 ## Proof status
 
 - Upstream scanner and core glob compiler/matcher: implemented in safe Rust
-- Unchanged upstream proof: **676/676 passing** across 33 original test files
+- Unchanged upstream proof: **1,966/1,966 passing** across 35 of 36 original
+  test files
 - Covered behavior includes literals, stars, question marks, globstars,
   braces, brackets, dotfiles, negation, POSIX classes, Windows/POSIX paths,
-  Bash and minimatch compatibility, regex features, nested extglobs,
+  Bash and minimatch compatibility, regex features, the complete Bash,
+  minimatch, and core extglob matrices,
   callbacks, ignore/format hooks, configurable input limits, malicious-pattern
   regressions, strict syntax errors, special characters, and option aliases
 - Frozen upstream test snapshot: 38 files, verified against canonical SHA-256

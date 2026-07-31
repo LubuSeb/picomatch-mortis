@@ -239,6 +239,7 @@ struct Compiler<'a> {
     trailing_magic: bool,
     exclude_slash_in_negated_classes: bool,
     inside_negative: bool,
+    inside_extglob: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -248,6 +249,7 @@ impl<'a> Compiler<'a> {
             trailing_magic: false,
             exclude_slash_in_negated_classes,
             inside_negative: false,
+            inside_extglob: false,
         }
     }
 
@@ -413,13 +415,16 @@ impl<'a> Compiler<'a> {
                     let mut compiled = Vec::with_capacity(branches.len());
                     for branch in branches {
                         let previous_inside_negative = self.inside_negative;
+                        let previous_inside_extglob = self.inside_extglob;
                         self.inside_negative = value == '!' || previous_inside_negative;
+                        self.inside_extglob = true;
                         let compiled_result = if value == '!' && branch.first() == Some(&'?') {
                             format!(r"\?{}", self.compile(&branch[1..], false)?)
                         } else {
                             self.compile(branch, false)?
                         };
                         self.inside_negative = previous_inside_negative;
+                        self.inside_extglob = previous_inside_extglob;
                         let mut compiled_branch = compiled_result;
                         if value == '!' && end + 1 < chars.len() && branch.starts_with(&['!', '('])
                         {
@@ -431,6 +436,7 @@ impl<'a> Compiler<'a> {
                     let negative_suffix = if value == '!'
                         && body.contains(&'*')
                         && chars.get(end + 1) == Some(&'.')
+                        && chars.get(end + 2) != Some(&'!')
                     {
                         self.compile(&chars[end + 1..], false)?
                     } else {
@@ -444,7 +450,9 @@ impl<'a> Compiler<'a> {
                         '!' => {
                             let consume = if body.contains(&'/') { ".*" } else { "[^/]*" };
                             let boundary = if end + 1 < chars.len() { "" } else { "(?:/|$)" };
-                            format!("(?!(?:{alternatives}){negative_suffix}{boundary}){consume}")
+                            format!(
+                                "(?:(?!(?:{alternatives}){negative_suffix}{boundary}){consume})"
+                            )
                         }
                         _ => unreachable!(),
                     };
@@ -624,7 +632,9 @@ impl<'a> Compiler<'a> {
             }
 
             if value == '+'
-                && (paren_depth > 0 || (index > 0 && matches!(chars[index - 1], ']' | ')' | '}')))
+                && (paren_depth > 0
+                    || (self.inside_extglob && index > 0)
+                    || (index > 0 && matches!(chars[index - 1], ']' | ')' | '}')))
             {
                 output.push('+');
             } else if !self.options.strict_brackets
