@@ -1,5 +1,7 @@
 # Picomatch Mortis
 
+[![proof](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml/badge.svg)](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml)
+
 A from-scratch Rust port of
 [`micromatch/picomatch`](https://github.com/micromatch/picomatch), an official
 Port Mortem 2026 pool repository.
