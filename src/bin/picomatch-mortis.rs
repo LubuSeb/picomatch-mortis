@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
 use picomatch_mortis::{
@@ -142,11 +142,15 @@ fn cached_pattern<'a>(
 
 fn serve() -> ExitCode {
     let mut cache = PatternCache::new();
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
     for line in io::stdin().lock().lines() {
         let line = match line {
             Ok(line) => line,
             Err(error) => {
-                println!("error\t{}", encode_hex(&error.to_string()));
+                if write_response(&mut stdout, "error", &error.to_string()).is_err() {
+                    return ExitCode::FAILURE;
+                }
                 continue;
             }
         };
@@ -155,12 +159,20 @@ fn serve() -> ExitCode {
             Ok(mut args) => run_command(&mut args, &mut cache),
             Err(error) => Err(error),
         };
-        match response {
-            Ok(value) => println!("ok\t{}", encode_hex(&value)),
-            Err(error) => println!("error\t{}", encode_hex(&error)),
+        let write_result = match response {
+            Ok(value) => write_response(&mut stdout, "ok", &value),
+            Err(error) => write_response(&mut stdout, "error", &error),
+        };
+        if write_result.is_err() {
+            return ExitCode::FAILURE;
         }
     }
     ExitCode::SUCCESS
+}
+
+fn write_response(output: &mut impl Write, status: &str, value: &str) -> io::Result<()> {
+    writeln!(output, "{status}\t{}", encode_hex(value))?;
+    output.flush()
 }
 
 fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
