@@ -260,6 +260,18 @@ impl<'a> Compiler<'a> {
             let value = chars[index];
 
             if value == '\\' {
+                let slash_end = chars[index..]
+                    .iter()
+                    .position(|character| *character != '\\')
+                    .map_or(chars.len(), |offset| index + offset);
+                let slash_count = slash_end - index;
+                if slash_count >= 2 && slash_count % 2 == 0 {
+                    output.push_str(r"\\");
+                    index = slash_end;
+                    segment_start = false;
+                    self.trailing_magic = false;
+                    continue;
+                }
                 if let Some(&next) = chars.get(index + 1) {
                     if self.options.unescape && next == '{' {
                         let mut end = index + 2;
@@ -374,14 +386,19 @@ impl<'a> Compiler<'a> {
             if !self.options.noextglob
                 && matches!(value, '?' | '*' | '+' | '@' | '!')
                 && chars.get(index + 1) == Some(&'(')
-                && chars.get(index + 2) != Some(&'?')
+                && !(chars.get(index + 2) == Some(&'?')
+                    && matches!(chars.get(index + 3), Some(':' | '=' | '!' | '<')))
             {
                 if let Some(end) = find_closing(chars, index + 1, '(', ')') {
                     let body = &chars[index + 2..end];
                     let branches = split_top_level(body, '|');
                     let mut compiled = Vec::with_capacity(branches.len());
                     for branch in branches {
-                        let mut compiled_branch = self.compile(branch, false)?;
+                        let mut compiled_branch = if value == '!' && branch.first() == Some(&'?') {
+                            format!(r"\?{}", self.compile(&branch[1..], false)?)
+                        } else {
+                            self.compile(branch, false)?
+                        };
                         if value == '!' && end + 1 < chars.len() && branch.starts_with(&['!', '('])
                         {
                             compiled_branch = compiled_branch.replacen("(?:/|$)", "", 1);
@@ -503,6 +520,22 @@ impl<'a> Compiler<'a> {
             }
 
             if value == '?' {
+                let follows_regex_group = index > 0
+                    && chars[index - 1] == ')'
+                    && chars[..index - 1]
+                        .iter()
+                        .rposition(|character| *character == '(')
+                        .is_some_and(|open| {
+                            chars.get(open + 1) == Some(&'?')
+                                && matches!(chars.get(open + 2), Some(':' | '=' | '!' | '<'))
+                        });
+                if follows_regex_group {
+                    output.push('?');
+                    segment_start = false;
+                    self.trailing_magic = false;
+                    index += 1;
+                    continue;
+                }
                 if index > 0
                     && chars[index - 1] == '('
                     && matches!(chars.get(index + 1), Some('!' | '=' | '<' | ':'))
@@ -978,5 +1011,11 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn collapses_long_even_escape_runs() {
+        let pattern = format!("{}A", "\\".repeat(65_500));
+        assert!(matches(r"\A", &pattern));
     }
 }
