@@ -49,6 +49,13 @@ pub struct GlobPattern {
     preserve_double_slash: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseToken {
+    pub kind: &'static str,
+    pub value: String,
+    pub output: Option<String>,
+}
+
 impl GlobPattern {
     pub fn new(pattern: &str, options: GlobOptions) -> Result<Self, GlobError> {
         if pattern.len() > MAX_LENGTH {
@@ -81,7 +88,7 @@ impl GlobPattern {
         if options.strict_brackets {
             validate_brackets(&chars)?;
         }
-        let mut compiler = Compiler::new(&options);
+        let mut compiler = Compiler::new(&options, false);
         let body = compiler.compile(&chars, true)?;
         let optional_slash = !options.strict_slashes && compiler.trailing_magic;
         let source = if options.contains {
@@ -91,11 +98,24 @@ impl GlobPattern {
         } else {
             format!("^(?:{body})$")
         };
+        // Picomatch exposes a JavaScript-compatible source string, where a
+        // negated class can include `/`. Native matching still has to enforce
+        // glob segment boundaries, so compile a private execution form that
+        // also excludes path separators from negated classes.
+        let mut match_compiler = Compiler::new(&options, true);
+        let match_body = match_compiler.compile(&chars, true)?;
+        let regex_source = if options.contains {
+            format!("(?:{match_body})")
+        } else if optional_slash {
+            format!(r"^(?:{match_body})\/?$")
+        } else {
+            format!("^(?:{match_body})$")
+        };
         let flags = Flags {
             icase: options.nocase,
             ..Flags::default()
         };
-        let regex = Regex::with_flags(&source, flags)
+        let regex = Regex::with_flags(&regex_source, flags)
             .map_err(|error| GlobError(format!("Invalid generated regex: {error}")))?;
 
         Ok(Self {
@@ -147,16 +167,83 @@ pub fn is_match(input: &str, pattern: &str, options: GlobOptions) -> Result<bool
     Ok(GlobPattern::new(pattern, options)?.is_match(input))
 }
 
+pub fn basename(path: &str, windows: bool) -> &str {
+    path.rsplit(|character| character == '/' || (windows && character == '\\'))
+        .find(|part| !part.is_empty())
+        .unwrap_or("")
+}
+
+/// Tokenize the public parse-state surface used by Picomatch consumers.
+pub fn parse_tokens(pattern: &str) -> Vec<ParseToken> {
+    fn flush(tokens: &mut Vec<ParseToken>, text: &mut String, seen_paren: bool, parens: usize) {
+        if !text.is_empty() {
+            let value = std::mem::take(text);
+            tokens.push(ParseToken {
+                kind: "text",
+                output: (!seen_paren || parens > 0).then(|| value.clone()),
+                value,
+            });
+        }
+    }
+
+    let chars: Vec<_> = pattern.chars().collect();
+    let mut tokens = vec![ParseToken {
+        kind: "bos",
+        value: String::new(),
+        output: Some(String::new()),
+    }];
+    let mut text = String::new();
+    let mut parens = 0usize;
+    let mut seen_paren = false;
+
+    for &character in &chars {
+        let kind = match character {
+            '{' | '}' => Some("brace"),
+            ',' if parens == 0 => Some("comma"),
+            '(' | ')' => Some("paren"),
+            '*' => Some("star"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            flush(&mut tokens, &mut text, seen_paren, parens);
+            if character == '(' {
+                parens += 1;
+                seen_paren = true;
+            } else if character == ')' {
+                parens = parens.saturating_sub(1);
+            }
+            tokens.push(ParseToken {
+                kind,
+                value: character.to_string(),
+                output: (character == ')').then(|| ")".to_owned()),
+            });
+        } else {
+            text.push(character);
+        }
+    }
+    flush(&mut tokens, &mut text, seen_paren, parens);
+    if chars.last() == Some(&'*') {
+        tokens.push(ParseToken {
+            kind: "maybe_slash",
+            value: String::new(),
+            output: Some(r"\/?".to_owned()),
+        });
+    }
+    tokens
+}
+
 struct Compiler<'a> {
     options: &'a GlobOptions,
     trailing_magic: bool,
+    exclude_slash_in_negated_classes: bool,
 }
 
 impl<'a> Compiler<'a> {
-    fn new(options: &'a GlobOptions) -> Self {
+    fn new(options: &'a GlobOptions, exclude_slash_in_negated_classes: bool) -> Self {
         Self {
             options,
             trailing_magic: false,
+            exclude_slash_in_negated_classes,
         }
     }
 
@@ -164,6 +251,7 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         let mut index = 0;
         let mut quoted = false;
+        let mut paren_depth = 0usize;
         self.trailing_magic = false;
 
         while index < chars.len() {
@@ -195,20 +283,23 @@ impl<'a> Compiler<'a> {
                             index += 2;
                         }
                     } else if self.options.unescape {
+                        if self.options.windows && !is_regex_syntax(next) {
+                            output.push_str(r"\/?");
+                        }
                         push_literal(&mut output, next);
+                        index += 2;
+                    } else if next.is_ascii_digit()
+                        || matches!(next, 'b' | 'B' | 'd' | 'D' | 's' | 'S' | 'w' | 'W')
+                    {
+                        output.push('\\');
+                        output.push(next);
                         index += 2;
                     } else if next == '\\' {
                         output.push_str(r"\\");
                         index += 2;
-                    } else if matches!(
-                        next,
-                        '*' | '?' | '+' | '@' | '!' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
-                    ) {
+                    } else {
                         push_literal(&mut output, next);
                         index += 2;
-                    } else {
-                        output.push_str(r"\\");
-                        index += 1;
                     }
                 } else {
                     output.push_str(r"\\");
@@ -281,6 +372,7 @@ impl<'a> Compiler<'a> {
             if !self.options.noextglob
                 && matches!(value, '?' | '*' | '+' | '@' | '!')
                 && chars.get(index + 1) == Some(&'(')
+                && chars.get(index + 2) != Some(&'?')
             {
                 if let Some(end) = find_closing(chars, index + 1, '(', ')') {
                     let body = &chars[index + 2..end];
@@ -290,19 +382,19 @@ impl<'a> Compiler<'a> {
                         compiled.push(self.compile(branch, segment_start)?);
                     }
                     let alternatives = compiled.join("|");
+                    let negative_suffix = if value == '!' && end + 1 < chars.len() {
+                        self.compile(&chars[end + 1..], false)?
+                    } else {
+                        String::new()
+                    };
                     let expression = match value {
                         '@' => format!("(?:{alternatives})"),
                         '?' => format!("(?:{alternatives})?"),
                         '+' => format!("(?:{alternatives})+"),
                         '*' => format!("(?:{alternatives})*"),
                         '!' => {
-                            let tail = if chars.get(end + 1) == Some(&'*') {
-                                "[^/]*"
-                            } else {
-                                ""
-                            };
                             let consume = if body.contains(&'/') { ".*" } else { "[^/]*" };
-                            format!("(?!(?:{alternatives}){tail}(?:/|$)){consume}")
+                            format!("(?!(?:{alternatives}){negative_suffix}(?:/|$)){consume}")
                         }
                         _ => unreachable!(),
                     };
@@ -351,6 +443,8 @@ impl<'a> Compiler<'a> {
                 } else if globstar && end == chars.len() {
                     let body = if self.options.dot {
                         r"(?:(?:(?!\.{1,2}(?:/|$))[^/]+(?:\/|$))|\/)*"
+                    } else if self.options.bash && has_explicit_dot_segment(&chars[..index]) {
+                        r"(?:(?:(?!\.)[^/]+(?:\/|$))|\/|\.[^/]+$)*"
                     } else {
                         r"(?:(?:(?!\.)[^/]+(?:\/|$))|\/)*"
                     };
@@ -358,6 +452,7 @@ impl<'a> Compiler<'a> {
                         && chars.get(index - 1) == Some(&'/')
                         && chars.get(index - 2) != Some(&'*')
                         && output.ends_with(r"\/")
+                        && !self.options.strict_slashes
                     {
                         output.truncate(output.len().saturating_sub(2));
                         output.push_str(&format!(r"(?:\/{body})?"));
@@ -398,6 +493,16 @@ impl<'a> Compiler<'a> {
             }
 
             if value == '?' {
+                if index > 0
+                    && chars[index - 1] == '('
+                    && matches!(chars.get(index + 1), Some('!' | '=' | '<' | ':'))
+                {
+                    output.push('?');
+                    segment_start = false;
+                    self.trailing_magic = false;
+                    index += 1;
+                    continue;
+                }
                 if segment_start && !self.options.dot {
                     output.push_str(self.segment_guard());
                 }
@@ -411,9 +516,20 @@ impl<'a> Compiler<'a> {
             if value == '[' && !self.options.nobracket {
                 if let Some(end) = find_class_end(chars, index) {
                     let raw: String = chars[index + 1..end].iter().collect();
-                    let translated = translate_class(&raw);
+                    if raw == r"\[" {
+                        output.push_str(r"\[");
+                        segment_start = false;
+                        self.trailing_magic = false;
+                        index = end + 1;
+                        continue;
+                    }
+                    let translated = translate_class(&raw, self.exclude_slash_in_negated_classes);
                     let literal = format!(r"\[{}\]", escape_regex(&raw));
-                    let class = format!("[{translated}]");
+                    let class = if raw.starts_with(']') {
+                        format!(r"[\{}]", translated)
+                    } else {
+                        format!("[{translated}]")
+                    };
                     if segment_start && has_known_posix(&raw) {
                         output.push_str("(?=.)");
                     }
@@ -430,10 +546,17 @@ impl<'a> Compiler<'a> {
                 }
             }
 
-            if value == '+' && index > 0 && matches!(chars[index - 1], ']' | ')' | '}') {
+            if value == '+'
+                && (paren_depth > 0 || (index > 0 && matches!(chars[index - 1], ']' | ')' | '}')))
+            {
                 output.push('+');
             } else if value == '(' || value == ')' || value == '|' {
                 output.push(value);
+                if value == '(' {
+                    paren_depth += 1;
+                } else if value == ')' {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
             } else {
                 push_literal(&mut output, value);
             }
@@ -462,6 +585,13 @@ fn push_literal(output: &mut String, value: char) {
         output.push('\\');
     }
     output.push(value);
+}
+
+fn is_regex_syntax(value: char) -> bool {
+    matches!(
+        value,
+        '*' | '?' | '+' | '@' | '!' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+    )
 }
 
 fn escape_regex(value: &str) -> String {
@@ -642,7 +772,7 @@ fn compile_range(parts: &[&[char]]) -> Result<String, GlobError> {
     Err(GlobError("Invalid brace range".to_owned()))
 }
 
-fn translate_class(raw: &str) -> String {
+fn translate_class(raw: &str, exclude_slash: bool) -> String {
     let mut output = String::with_capacity(raw.len());
     let chars: Vec<_> = raw.chars().collect();
     for (index, character) in chars.iter().enumerate() {
@@ -653,6 +783,9 @@ fn translate_class(raw: &str) -> String {
     }
     if output.starts_with('!') {
         output.replace_range(..1, "^");
+    }
+    if exclude_slash && output.starts_with('^') && !output.contains('/') {
+        output.push('/');
     }
     for (name, value) in [
         ("alnum", "a-zA-Z0-9"),
@@ -703,6 +836,12 @@ fn collapse_slashes(value: &str) -> String {
         }
     }
     output
+}
+
+fn has_explicit_dot_segment(chars: &[char]) -> bool {
+    chars.iter().enumerate().any(|(index, character)| {
+        *character == '.' && (index == 0 || chars.get(index - 1) == Some(&'/'))
+    })
 }
 
 fn validate_brackets(chars: &[char]) -> Result<(), GlobError> {

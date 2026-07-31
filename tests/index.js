@@ -6,6 +6,7 @@ const scan = require('./lib/scan')
 const optionArgs = options => {
   const args = []
   if (!options) return args
+  if (typeof options.flags === 'string' && options.flags.includes('i')) args.push('--nocase')
   for (const [name, flag] of [
     ['windows', '--windows'], ['dot', '--dot'], ['nocase', '--nocase'],
     ['contains', '--contains'], ['nonegate', '--nonegate'], ['noextglob', '--noextglob'],
@@ -16,7 +17,7 @@ const optionArgs = options => {
     ['regex', '--regex'],
     ['unescape', '--unescape'],
   ]) {
-    if (options[name] === true) args.push(flag)
+    if (options[name] === true && !args.includes(flag)) args.push(flag)
   }
   if (typeof options.literalBrackets === 'boolean') {
     args.push('--literal-brackets', String(options.literalBrackets))
@@ -34,11 +35,16 @@ const nativeOutput = (command, glob, options) => call([
 ])
 
 const picomatch = (glob, options = {}, returnState = false) => {
-  if (typeof glob !== 'string') throw new TypeError('Expected pattern to be a non-empty string')
-  const state = returnState ? { input: glob, negated: !options.nonegate && glob.startsWith('!') } : undefined
+  if (typeof glob !== 'string' || glob.length === 0) throw new TypeError('Expected pattern to be a non-empty string')
+  const state = returnState ? {
+    input: glob,
+    negated: !options.nonegate && glob.startsWith('!') && !glob.startsWith('!('),
+    negatedExtglob: glob.startsWith('!('),
+  } : undefined
   const matcher = (input, returnObject = false) => {
     if (typeof input !== 'string') throw new TypeError('Expected input to be a string')
-    const output = typeof options.format === 'function' ? options.format(input) : input
+    let output = typeof options.format === 'function' ? options.format(input) : input
+    if (options.windows) output = output.replace(/\\/g, '/')
     const matched = input === glob || nativeMatch(output, glob, options)
     const ignored = matched && options.ignore
       ? [].concat(options.ignore).some(pattern => nativeMatch(output, pattern, options))
@@ -66,8 +72,7 @@ picomatch.test = (input, regex) => {
 }
 picomatch.matchBase = (input, glob, options = {}) => nativeMatch(input, glob, { ...options, basename: true })
 picomatch.isMatch = (input, patterns, options = {}) => {
-  const output = typeof options.format === 'function' ? options.format(input) : input
-  return [].concat(patterns).some(pattern => input === pattern || nativeMatch(output, pattern, options))
+  return [].concat(patterns).some(pattern => picomatch(pattern, options)(input))
 }
 picomatch.makeRe = (glob, options = {}) => {
   if (typeof glob !== 'string') throw new TypeError('Expected a non-empty string')
@@ -77,7 +82,14 @@ picomatch.makeRe = (glob, options = {}) => {
   }
   return new RegExp(source, options.nocase ? 'i' : '')
 }
-picomatch.parse = (glob, options = {}) => ({ input: glob, output: nativeOutput('parse', glob, options) })
+picomatch.parse = (glob, options = {}) => {
+  const encoded = nativeOutput('tokens', glob, options)
+  const tokens = encoded === '' ? [] : encoded.split('\x1e').map(entry => {
+    const [type, value, hasOutput, output] = entry.split('\x1f')
+    return { type, value, output: hasOutput === 'true' ? output : undefined }
+  })
+  return { input: glob, output: nativeOutput('parse', glob, options), tokens }
+}
 picomatch.scan = scan
 
 module.exports = picomatch

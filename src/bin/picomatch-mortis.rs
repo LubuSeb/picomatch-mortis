@@ -3,7 +3,8 @@ use std::io::{self, BufRead};
 use std::process::ExitCode;
 
 use picomatch_mortis::{
-    GlobOptions, GlobPattern, ScanDepth, ScanOptions, ScanState, is_match, scan,
+    GlobOptions, GlobPattern, ParseToken, ScanDepth, ScanOptions, ScanState, basename, is_match,
+    parse_tokens, scan,
 };
 
 fn main() -> ExitCode {
@@ -76,6 +77,8 @@ fn run_glob_command(args: &mut Vec<String>) -> Result<String, String> {
         Some("parse") if args.len() == 2 => GlobPattern::new(&args[1], options)
             .map(|pattern| pattern.output().to_owned())
             .map_err(|error| error.to_string()),
+        Some("tokens") if args.len() == 2 => Ok(encode_tokens(&parse_tokens(&args[1]))),
+        Some("basename") if args.len() == 2 => Ok(basename(&args[1], options.windows).to_owned()),
         _ => Err("usage: picomatch-mortis is-match PATTERN INPUT [OPTIONS]".to_owned()),
     }
 }
@@ -164,6 +167,22 @@ fn encode_scan(state: &ScanState) -> String {
         max_depth,
     ]
     .join("\t")
+}
+
+fn encode_tokens(tokens: &[ParseToken]) -> String {
+    tokens
+        .iter()
+        .map(|token| {
+            format!(
+                "{}\x1f{}\x1f{}\x1f{}",
+                token.kind,
+                token.value,
+                token.output.is_some(),
+                token.output.as_deref().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\x1e")
 }
 
 fn encode_hex(value: &str) -> String {
