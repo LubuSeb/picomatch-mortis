@@ -238,6 +238,7 @@ struct Compiler<'a> {
     options: &'a GlobOptions,
     trailing_magic: bool,
     exclude_slash_in_negated_classes: bool,
+    inside_negative: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -246,6 +247,7 @@ impl<'a> Compiler<'a> {
             options,
             trailing_magic: false,
             exclude_slash_in_negated_classes,
+            inside_negative: false,
         }
     }
 
@@ -391,14 +393,34 @@ impl<'a> Compiler<'a> {
             {
                 if let Some(end) = find_closing(chars, index + 1, '(', ')') {
                     let body = &chars[index + 2..end];
+                    if value == '!' {
+                        if let Some((inner_depth, literal)) = nested_negative_literal(body) {
+                            let total_depth = inner_depth + 1;
+                            let literal = self.compile(literal, false)?;
+                            if total_depth % 2 == 0 {
+                                output.push_str(&literal);
+                            } else {
+                                let boundary = if end + 1 < chars.len() { "" } else { "(?:/|$)" };
+                                output.push_str(&format!("(?!(?:{literal}){boundary})[^/]*"));
+                            }
+                            segment_start = false;
+                            self.trailing_magic = false;
+                            index = end + 1;
+                            continue;
+                        }
+                    }
                     let branches = split_top_level(body, '|');
                     let mut compiled = Vec::with_capacity(branches.len());
                     for branch in branches {
-                        let mut compiled_branch = if value == '!' && branch.first() == Some(&'?') {
+                        let previous_inside_negative = self.inside_negative;
+                        self.inside_negative = value == '!' || previous_inside_negative;
+                        let compiled_result = if value == '!' && branch.first() == Some(&'?') {
                             format!(r"\?{}", self.compile(&branch[1..], false)?)
                         } else {
                             self.compile(branch, false)?
                         };
+                        self.inside_negative = previous_inside_negative;
+                        let mut compiled_branch = compiled_result;
                         if value == '!' && end + 1 < chars.len() && branch.starts_with(&['!', '('])
                         {
                             compiled_branch = compiled_branch.replacen("(?:/|$)", "", 1);
@@ -406,7 +428,10 @@ impl<'a> Compiler<'a> {
                         compiled.push(compiled_branch);
                     }
                     let alternatives = compiled.join("|");
-                    let negative_suffix = if value == '!' && end + 1 < chars.len() {
+                    let negative_suffix = if value == '!'
+                        && body.contains(&'*')
+                        && chars.get(end + 1) == Some(&'.')
+                    {
                         self.compile(&chars[end + 1..], false)?
                     } else {
                         String::new()
@@ -418,7 +443,8 @@ impl<'a> Compiler<'a> {
                         '*' => format!("(?:{alternatives})*"),
                         '!' => {
                             let consume = if body.contains(&'/') { ".*" } else { "[^/]*" };
-                            format!("(?!(?:{alternatives}){negative_suffix}(?:/|$)){consume}")
+                            let boundary = if end + 1 < chars.len() { "" } else { "(?:/|$)" };
+                            format!("(?!(?:{alternatives}){negative_suffix}{boundary}){consume}")
                         }
                         _ => unreachable!(),
                     };
@@ -480,6 +506,7 @@ impl<'a> Compiler<'a> {
                         && chars.get(index - 2) != Some(&'*')
                         && output.ends_with(r"\/")
                         && !self.options.strict_slashes
+                        && !self.inside_negative
                     {
                         output.truncate(output.len().saturating_sub(2));
                         output.push_str(&format!(r"(?:\/{body})?"));
@@ -663,6 +690,30 @@ fn escape_regex(value: &str) -> String {
     output
 }
 
+fn nested_negative_literal(mut chars: &[char]) -> Option<(usize, &[char])> {
+    let mut depth = 0usize;
+    while chars.starts_with(&['!', '(']) {
+        let end = find_closing(chars, 1, '(', ')')?;
+        if end + 1 != chars.len() {
+            return None;
+        }
+        depth += 1;
+        chars = &chars[2..end];
+    }
+    if depth == 0
+        || chars.is_empty()
+        || chars.iter().any(|character| {
+            matches!(
+                character,
+                '*' | '?' | '[' | ']' | '{' | '}' | '(' | ')' | '|'
+            )
+        })
+    {
+        return None;
+    }
+    Some((depth, chars))
+}
+
 fn find_closing(chars: &[char], start: usize, open: char, close: char) -> Option<usize> {
     let mut depth = 0;
     let mut escaped = false;
@@ -676,7 +727,7 @@ fn find_closing(chars: &[char], start: usize, open: char, close: char) -> Option
             escaped = true;
             continue;
         }
-        if character == '[' {
+        if character == '[' && bracket == 0 && find_class_end(chars, index).is_some() {
             bracket += 1;
         } else if character == ']' && bracket > 0 {
             bracket -= 1;
