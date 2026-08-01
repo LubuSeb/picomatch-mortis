@@ -4,13 +4,16 @@
 
 [Benchmark report](BENCHMARK.md) | [2-3 minute demo runbook](DEMO_SCRIPT.md)
 
-**I didn't port 2,444 lines; I ported 1,977 observable promises.**
+Picomatch Mortis is a standalone Rust implementation of
+[`micromatch/picomatch`](https://github.com/micromatch/picomatch)'s scanner,
+compiler, and matcher. Its CLI runs without Node, and its proof harness has no
+JavaScript fallback glob matcher. If deterministic regex fuel is exhausted, the
+native API returns an explicit, recoverable error rather than `false`, and the
+same persistent process handles the next ordinary match.
 
-Picomatch Mortis is a behavior-first JavaScript-to-Rust port of
-[`micromatch/picomatch`](https://github.com/micromatch/picomatch), selected from
-the official Port Mortem 2026 pool for **Track F: JavaScript to Go/Rust**. Glob
-compatibility is deceptively consequential: one edge-case mismatch can select
-the wrong files in a build, test, or packaging pipeline.
+The project was selected from the official Port Mortem 2026 pool for **Track F:
+JavaScript to Go/Rust**. Glob compatibility is consequential: one edge-case
+mismatch can select the wrong files in a build, test, or packaging pipeline.
 
 ## Result
 

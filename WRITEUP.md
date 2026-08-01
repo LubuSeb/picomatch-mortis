@@ -1,6 +1,11 @@
-# I ported 1,977 observable promises: Picomatch Mortis
+# Picomatch Mortis: porting Picomatch from JavaScript to Rust
 
 *Port Mortem 2026, Track F -- JavaScript to Rust*
+
+Picomatch Mortis is a standalone Rust implementation of Picomatch's scanner,
+compiler, and matcher. The CLI runs without Node, the proof harness has no
+JavaScript fallback glob matcher, and exhausted native regex fuel becomes an
+explicit, recoverable error rather than a normal non-match.
 
 ## The bet
 
