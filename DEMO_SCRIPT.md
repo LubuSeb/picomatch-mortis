@@ -1,33 +1,70 @@
-# Picomatch Mortis: 2--3 minute demo
+# Picomatch Mortis: 2--3 minute judge demo
 
-Record one continuous terminal take. Keep the repository and CI page visible
-before starting; use a large font. Target length: 2:20.
+Record one continuous terminal take with a large font. Build once before
+recording so the live commands stay fast. Target length: about 2:30.
 
-## 0:00--0:20 -- The claim
+## 0:00--0:25 -- Start with the standalone Rust program
 
-> Picomatch Mortis is a from-scratch Rust port of Picomatch for Track F. The
-> claim is deliberately narrow and reproducible: all 1,977 executable tests
-> from the exact kickoff commit pass unchanged on Ubuntu and Windows, together
-> with 16 native Rust regressions.
+Run these first, before showing any JavaScript:
 
-Show the CI badge and the "Judge it in 60 seconds" table in `README.md`.
+```sh
+cargo run --release --quiet -- is-match --payload "src/**/*.rs" "src/parser/glob.rs"
+cargo run --release --quiet -- source --payload "!(*.test).js"
+```
 
-## 0:20--0:45 -- Prove the fixtures
+> The first result is `true`; the second is the regex source produced by the
+> Rust compiler. This is a standalone native package, not a JavaScript rewrite.
+> The typed `--payload` boundary also prevents option-looking patterns and
+> inputs from being interpreted as CLI flags.
+
+Optionally make that last point visible with one short extra command:
+
+```sh
+cargo run --release --quiet -- is-match --payload "--payload/*" "--payload/value"
+```
+
+## 0:25--0:55 -- Run the frozen proof
 
 Run:
 
 ```sh
-npm run verify:upstream
+npm test
 ```
 
-> This does not trust my own checksum. It fetches the pinned upstream commit,
-> verifies the complete 38-file test tree, and byte-compares every normalized
-> file with the frozen copy.
+> This verifies the 38 frozen fixture files, runs 28 Rust tests, then runs all
+> 1,977 executable tests from the exact kickoff commit unchanged. The final
+> adapter checks exercise captures, flags, typed payloads, limits, recovery,
+> and teardown. The same workflow runs on Ubuntu and Windows.
 
-Then show the latest CI run with both operating-system jobs green. Do not wait
-for the full test suite during the recording.
+Let the command finish live; it should be brief after the build is warm. Pause
+on the four green stages rather than scrolling through individual test names.
 
-## 0:45--1:20 -- Show behavior
+## 0:55--1:15 -- Prove the hardest compatibility rule
+
+Run:
+
+```sh
+npm run test:casefold
+```
+
+> JavaScript's legacy `/i` case folding is not Unicode `/iu` folding. This
+> independent exhaustive check derives the legacy equivalence classes and
+> compares literal and character-class behavior against Node.
+
+## 1:15--1:40 -- Show evidence beyond the upstream suite
+
+Show the already-completed output from `npm run fuzz:ci` and the command in
+`package.json`.
+
+> Five deterministic seeds generated 100,000 differential comparisons, plus
+> 535 directed executions. Every case ran against both the pinned upstream
+> package and this port, with zero mismatches. This is strong reproducible
+> evidence, not a claim of formal equivalence.
+
+Do not run the full fuzz command during the recording; the seed list and final
+outputs make the result reproducible without spending the viewer's time.
+
+## 1:40--2:15 -- Show behavior, captures, and safe recovery
 
 Run:
 
@@ -35,42 +72,24 @@ Run:
 npm run demo
 ```
 
-> One persistent bridge preserves Picomatch's synchronous JavaScript API, but
-> scanning, compilation, and matching happen in Rust. Here are globstars,
-> braces, negative extglobs, Windows paths, and JavaScript UTF-16 semantics.
-> The scanner state and public regex source also come from Rust.
+> The proof adapter keeps Picomatch's synchronous API while a persistent native
+> process performs scanning, compilation, and matching. Notice legacy `i`
+> rejecting long-s while Unicode `iu` accepts it, the real capture array with
+> UTF-16 indices, and an option-looking payload crossing the typed boundary.
 
-Pause briefly on the included and excluded negative-extglob rows, then on the
-scanner tokens.
+Pause on the final safety section:
 
-## 1:20--1:50 -- Show evidence beyond the suite
+> A hostile repeated extglob does not hang, crash, or silently return `false`.
+> It raises an explicit safe-work-limit error, and the very next ordinary match
+> succeeds through the same process.
 
-Show the completed output from:
+## 2:15--2:35 -- Honest close
 
-```sh
-npm run fuzz:ci
-```
+> The core scanner, compiler, and matcher are native Rust; JavaScript is the
+> proof adapter required to run the unchanged upstream API tests. If a caller
+> takes `makeRe()` output and executes that JavaScript `RegExp` directly, it no
+> longer has the native matcher's fuel limit. Public regex source can also
+> differ structurally even where tested behavior and captures agree. The repo
+> exposes the tests, seeds, bounds, and CI needed to audit every claim.
 
-> This bounded harness runs identical generated inputs against upstream and
-> the port. Early runs found edge cases; adversarial review then added Unicode
-> and composed patterns plus three alternate seeds. It now reports 80,000
-> comparisons and zero mismatches. This is not a formal proof, but it tests
-> behavior beyond the frozen examples.
-
-## 1:50--2:10 -- Engineering and safety
-
-Show `src/lib.rs`, the `forbid(unsafe_code)` line, and the final two demo rows.
-
-> Risky repeated extglobs are simplified structurally rather than handed to a
-> regex engine unchecked. The crate forbids unsafe code, the regex dependency
-> uses its safe implementation, and bridge requests have a tested bounded
-> failure-and-teardown path instead of hanging forever.
-
-## 2:10--2:25 -- Honest close
-
-> The adapter still owns JavaScript-only callbacks, arrays, and RegExp object
-> reconstruction; the Rust crate is not published yet; and this is behavioral
-> evidence, not a theorem. The repository exposes every command and limitation
-> needed to judge the claim. Thank you.
-
-End on the README evidence table and repository URL.
+End on the repository page with both Ubuntu and Windows jobs green.

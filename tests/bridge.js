@@ -3,7 +3,7 @@
 const path = require('node:path')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 
-const CAPACITY = 256 * 1024
+const CAPACITY = 4 * 1024 * 1024
 const TIMEOUT_MS = Number.parseInt(process.env.PICOMATCH_MORTIS_TIMEOUT_MS || '10000', 10)
 
 if (!isMainThread) {
@@ -28,6 +28,18 @@ if (!isMainThread) {
     }
   })
 
+  const publish = (sequence, encoded) => {
+    if (encoded.length > bytes.length) {
+      encoded = encoder.encode(
+        `error\t${Buffer.from('bridge response is too large').toString('hex')}`
+      )
+    }
+    bytes.set(encoded)
+    Atomics.store(control, 2, encoded.length)
+    Atomics.store(control, 1, sequence)
+    Atomics.notify(control, 1)
+  }
+
   const loop = async () => {
     let handledSequence = 0
     Atomics.store(control, 1, handledSequence)
@@ -41,24 +53,21 @@ if (!isMainThread) {
         parentPort.close()
         return
       }
-      const request = decoder.decode(bytes.subarray(0, Atomics.load(control, 2)))
-      child.stdin.write(request)
-      const [response] = await once(lines, 'line')
-      const encoded = encoder.encode(response)
-      bytes.set(encoded)
-      Atomics.store(control, 2, encoded.length)
+      try {
+        const request = decoder.decode(bytes.subarray(0, Atomics.load(control, 2)))
+        child.stdin.write(request)
+        const [response] = await once(lines, 'line')
+        publish(requestSequence, encoder.encode(response))
+      } catch (error) {
+        publish(
+          requestSequence,
+          encoder.encode(`error\t${Buffer.from(error.stack || String(error)).toString('hex')}`)
+        )
+      }
       handledSequence = requestSequence
-      Atomics.store(control, 1, handledSequence)
-      Atomics.notify(control, 1)
     }
   }
-  loop().catch(error => {
-    const encoded = encoder.encode(`error\t${Buffer.from(error.stack).toString('hex')}`)
-    bytes.set(encoded)
-    Atomics.store(control, 2, encoded.length)
-    Atomics.store(control, 1, Atomics.load(control, 0))
-    Atomics.notify(control, 1)
-  })
+  void loop()
 } else {
   const shared = new SharedArrayBuffer(CAPACITY + 12)
   const control = new Int32Array(shared, 0, 3)
@@ -86,11 +95,32 @@ if (!isMainThread) {
   worker.unref()
   let closePromise
   let failed = false
+  let closed = false
   let requestSequence = 0
 
   const hex = value => Buffer.from(String(value)).toString('hex')
+  const hasLoneSurrogate = value => {
+    const string = String(value)
+    for (let index = 0; index < string.length; index++) {
+      const codeUnit = string.charCodeAt(index)
+      if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+        const next = string.charCodeAt(index + 1)
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          index++
+          continue
+        }
+        return true
+      }
+      if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return true
+    }
+    return false
+  }
   const call = args => {
+    if (closed) throw new Error('Rust proof bridge is closed')
     if (failed) throw new Error('Rust proof bridge is unavailable after a prior timeout')
+    if (args.some(hasLoneSurrogate)) {
+      throw new TypeError('Lone UTF-16 surrogates are not supported by the proof bridge')
+    }
     const request = encoder.encode(`${args.map(hex).join('\t')}\n`)
     if (request.length > CAPACITY) throw new RangeError('bridge request is too large')
     bytes.set(request)
@@ -117,6 +147,7 @@ if (!isMainThread) {
 
   const close = () => {
     if (!closePromise) {
+      closed = true
       worker.ref()
       Atomics.store(control, 0, -1)
       Atomics.notify(control, 0)

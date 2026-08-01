@@ -38,7 +38,7 @@ fn main() -> ExitCode {
     }
 
     let mut cache = PatternCache::new();
-    match run_command(&mut args, &mut cache) {
+    match run_command(&mut args, &mut cache, true) {
         Ok(output) => {
             println!("{output}");
             ExitCode::SUCCESS
@@ -50,19 +50,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_command(args: &mut Vec<String>, cache: &mut PatternCache) -> Result<String, String> {
+fn run_command(
+    args: &mut Vec<String>,
+    cache: &mut PatternCache,
+    allow_typed_payload: bool,
+) -> Result<String, String> {
+    if allow_typed_payload
+        && args.first().is_some_and(|argument| {
+            matches!(
+                argument.as_str(),
+                "is-match" | "match-span" | "source" | "parse" | "tokens" | "basename" | "scan"
+            )
+        })
+        && args.iter().any(|argument| argument == "--payload")
+    {
+        return run_typed_command(args, cache);
+    }
     if !args.iter().any(|argument| argument == "scan") {
         return run_glob_command(args, cache);
     }
-    let options = ScanOptions {
-        scan_to_end: take_flag(args, "--scan-to-end"),
-        parts: take_flag(args, "--parts"),
-        tokens: take_flag(args, "--tokens"),
-        noext: take_flag(args, "--noext"),
-        nonegate: take_flag(args, "--nonegate"),
-        noparen: take_flag(args, "--noparen"),
-        unescape: take_flag(args, "--unescape"),
-    };
+    let options = take_scan_options(args);
 
     match args.first().map(String::as_str) {
         Some("scan") if args.len() == 2 => Ok(encode_scan(&scan(&args[1], options))),
@@ -70,16 +77,101 @@ fn run_command(args: &mut Vec<String>, cache: &mut PatternCache) -> Result<Strin
     }
 }
 
+fn take_scan_options(args: &mut Vec<String>) -> ScanOptions {
+    ScanOptions {
+        scan_to_end: take_flag(args, "--scan-to-end"),
+        parts: take_flag(args, "--parts"),
+        tokens: take_flag(args, "--tokens"),
+        noext: take_flag(args, "--noext"),
+        nonegate: take_flag(args, "--nonegate"),
+        noparen: take_flag(args, "--noparen"),
+        unescape: take_flag(args, "--unescape"),
+    }
+}
+
+fn run_typed_command(args: &mut Vec<String>, cache: &mut PatternCache) -> Result<String, String> {
+    let command = args.remove(0);
+    let marker = args
+        .iter()
+        .position(|argument| argument == "--payload")
+        .ok_or_else(|| "missing typed-command payload marker".to_owned())?;
+    let payload = args.split_off(marker + 1);
+    args.truncate(marker);
+
+    if command == "scan" {
+        let options = take_scan_options(args);
+        if !args.is_empty() || payload.len() != 1 {
+            return Err("usage: picomatch-mortis scan [OPTIONS] --payload PATTERN".to_owned());
+        }
+        return Ok(encode_scan(&scan(&payload[0], options)));
+    }
+
+    if command == "match-span" {
+        let start = take_value(args, "--start")
+            .and_then(|value| value.parse::<usize>().ok())
+            .ok_or_else(|| "match-span requires a non-negative --start offset".to_owned())?;
+        let sticky = take_flag(args, "--sticky");
+        let options = take_glob_options(args);
+        if !args.is_empty() || payload.len() != 2 {
+            return Err(
+                "usage: picomatch-mortis match-span [OPTIONS] --start N [--sticky] --payload PATTERN INPUT"
+                    .to_owned(),
+            );
+        }
+        let pattern = cached_pattern(cache, &payload[0], options)?;
+        return pattern
+            .find_match_from(&payload[1], start, sticky)
+            .map(|matched| matched.map_or_else(|| "N".to_owned(), encode_glob_match))
+            .map_err(|error| error.to_string());
+    }
+
+    let options = take_glob_options(args);
+    if !args.is_empty() {
+        return Err(format!("unknown option: {}", args.join(" ")));
+    }
+    let mut command_and_payload = Vec::with_capacity(payload.len() + 1);
+    command_and_payload.push(command);
+    command_and_payload.extend(payload);
+    run_glob_payload(&command_and_payload, options, cache)
+}
+
+/// `match-span` uses `N` for no match and
+/// `M:<start>:<end>|<capture>,...` for a match. Each capture is either `-`
+/// or `<start>:<end>`, and every offset is a JavaScript UTF-16 code-unit offset.
+fn encode_glob_match(value: picomatch_mortis::GlobMatch) -> String {
+    let mut output = format!("M:{}:{}|", value.start, value.end);
+    for (index, capture) in value.captures.into_iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        if let Some((start, end)) = capture {
+            output.push_str(&format!("{start}:{end}"));
+        } else {
+            output.push('-');
+        }
+    }
+    output
+}
+
 fn run_glob_command(args: &mut Vec<String>, cache: &mut PatternCache) -> Result<String, String> {
+    let options = take_glob_options(args);
+    run_glob_payload(args, options, cache)
+}
+
+fn take_glob_options(args: &mut Vec<String>) -> GlobOptions {
     let literal_brackets = take_value(args, "--literal-brackets").map(|value| value == "true");
     let max_length = take_value(args, "--max-length").and_then(|value| value.parse().ok());
     let max_extglob_recursion =
         take_value(args, "--max-extglob-recursion").and_then(|value| value.parse().ok());
-    let options = GlobOptions {
+    GlobOptions {
         windows: take_flag(args, "--windows"),
         posix: take_flag(args, "--posix"),
         dot: take_flag(args, "--dot"),
         nocase: take_flag(args, "--nocase"),
+        unicode: take_flag(args, "--unicode"),
+        unicode_sets: take_flag(args, "--unicode-sets"),
+        multiline: take_flag(args, "--multiline"),
+        dot_all: take_flag(args, "--dot-all"),
         contains: take_flag(args, "--contains"),
         nonegate: take_flag(args, "--nonegate"),
         noextglob: take_flag(args, "--noextglob") || take_flag(args, "--noext"),
@@ -98,12 +190,26 @@ fn run_glob_command(args: &mut Vec<String>, cache: &mut PatternCache) -> Result<
         max_extglob_recursion,
         unbounded_extglob_recursion: take_flag(args, "--unbounded-extglob-recursion"),
         capture: take_flag(args, "--capture"),
-    };
+    }
+}
+
+fn run_glob_payload(
+    args: &[String],
+    options: GlobOptions,
+    cache: &mut PatternCache,
+) -> Result<String, String> {
     match args.first().map(String::as_str) {
         Some("is-match") if args.len() == 3 || args.len() == 4 => {
             let exact_match = args.len() == 4 && !options.capture && args[3] == args[1];
-            cached_pattern(cache, &args[1], options)
-                .map(|pattern| (exact_match || pattern.is_match(&args[2])).to_string())
+            let pattern = cached_pattern(cache, &args[1], options)?;
+            if exact_match {
+                Ok(true.to_string())
+            } else {
+                pattern
+                    .is_match(&args[2])
+                    .map(|matched| matched.to_string())
+                    .map_err(|error| error.to_string())
+            }
         }
         Some("source") if args.len() == 2 => {
             cached_pattern(cache, &args[1], options).map(|pattern| pattern.source().to_owned())
@@ -156,7 +262,7 @@ fn serve() -> ExitCode {
         };
         let decoded: Result<Vec<_>, _> = line.split('\t').map(decode_hex).collect();
         let response = match decoded {
-            Ok(mut args) => run_command(&mut args, &mut cache),
+            Ok(mut args) => run_command(&mut args, &mut cache, true),
             Err(error) => Err(error),
         };
         let write_result = match response {
@@ -274,10 +380,10 @@ fn encode_tokens(tokens: &[ParseToken]) -> String {
         .map(|token| {
             format!(
                 "{}\x1f{}\x1f{}\x1f{}",
-                token.kind,
-                token.value,
+                encode_hex(token.kind),
+                encode_hex(&token.value),
                 token.output.is_some(),
-                token.output.as_deref().unwrap_or_default()
+                encode_hex(token.output.as_deref().unwrap_or_default())
             )
         })
         .collect::<Vec<_>>()

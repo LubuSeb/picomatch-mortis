@@ -3,7 +3,8 @@
 const { call } = require('../bridge')
 
 exports.basename = (input, options = {}) => call([
-  ...(options.windows ? ['--windows'] : []),
   'basename',
+  ...(options.windows ? ['--windows'] : []),
+  '--payload',
   input,
 ])

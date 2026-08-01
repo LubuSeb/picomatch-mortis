@@ -2,69 +2,70 @@
 
 [![proof](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml/badge.svg)](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml)
 
-[Benchmark report](BENCHMARK.md) · [2–3 minute demo runbook](DEMO_SCRIPT.md)
+[Benchmark report](BENCHMARK.md) | [2-3 minute demo runbook](DEMO_SCRIPT.md)
 
-A from-scratch JavaScript-to-Rust port of
+**I didn't port 2,444 lines; I ported 1,977 observable promises.**
+
+Picomatch Mortis is a behavior-first JavaScript-to-Rust port of
 [`micromatch/picomatch`](https://github.com/micromatch/picomatch), selected from
-the official Port Mortem 2026 pool. **Track F: JavaScript to Go/Rust.**
-Glob compatibility is deceptively consequential: one edge-case mismatch can
-select the wrong files in a build, test, or packaging pipeline.
+the official Port Mortem 2026 pool for **Track F: JavaScript to Go/Rust**. Glob
+compatibility is deceptively consequential: one edge-case mismatch can select
+the wrong files in a build, test, or packaging pipeline.
 
 ## Result
 
-- **1,977/1,977 unchanged upstream tests pass** across all 36 executable
-  suites, plus 16 native Rust regressions.
-- A seeded differential harness compares the original and port on **80,000
-  bounded Boolean-match cases across four seeds, plus 15 directed adversarial
-  regressions: 0 mismatches**.
-- The 38-file snapshot is SHA-256 checked offline and can be fetched and
-  byte-compared directly with the exact upstream commit.
-- CI runs the complete proof and strict Clippy on Ubuntu and Windows with
-  Rust 1.85.
-- This crate uses `#![forbid(unsafe_code)]`; its ECMAScript regex dependency
-  is built with `prohibit-unsafe`.
+- **1,977/1,977 unchanged upstream tests pass** from a SHA-256-locked snapshot
+  of 38 files at Picomatch commit `4f41a8e`, alongside **28 native Rust tests**.
+- Five fixed differential seeds exercise **100,000 generated comparisons plus
+  535 directed executions: 0 mismatches**.
+- A separate legacy-ignore-case proof checks all **1,166 nonidentity BMP mappings**:
+  2,386 ordered equivalences and 4,772 literal/class checks in 38 batches.
+- The full vendored regex-engine suite passes, Rust 1.85 Clippy is clean, and
+  `npm audit` reports zero vulnerabilities.
+- CI runs the proof on Ubuntu and Windows. The crate uses
+  `#![forbid(unsafe_code)]`, and its regex engine uses `prohibit-unsafe`.
 
-The port covers scanning and matching; literals, stars, qmarks and globstars;
-braces and ranges; brackets and POSIX classes; dotfile rules; path negation;
-Windows and POSIX separators; generated-regex captures, lookarounds and
-backreferences; all five extglob operators; Bash and minimatch compatibility
-matrices; callbacks and ignore/format hooks; and malicious-pattern safeguards.
+The native port covers scan, compile, match and capture behavior: literals,
+stars, qmarks, globstars, braces, ranges, brackets, POSIX classes, dotfiles,
+path negation, Windows/POSIX separators, lookarounds, backreferences, every
+extglob operator, and Picomatch's supported regex flags. Native UTF-16 spans
+are reconstructed by the proof adapter as real RegExp-compatible match arrays,
+including named groups and `d` indices, with `g`/`y` state behavior preserved.
 
 ## Judge it in 60 seconds
 
 | Claim | Reproducible evidence |
 | --- | --- |
-| The tests are really upstream's | `npm run verify:upstream` fetches commit `4f41a8e` and compares the complete 38-file test tree after LF normalization |
-| The frozen behavior is preserved | `npm test` runs 1,977 unchanged upstream tests and 16 native regressions |
-| The bounded Boolean matcher corpus agrees | `npm run fuzz:ci` reports 80,000 generated comparisons across four fixed seeds plus 15 directed regressions per run, with 0 mismatches |
-| The implementation is native and safe | Core scan/compile/match code is Rust; this crate forbids unsafe code and `regress` is built with `prohibit-unsafe` |
-| It works on both path platforms | [CI](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml) runs every proof gate on Ubuntu and Windows |
+| The tests are really upstream's | `npm run verify:upstream` fetches commit `4f41a8e` and byte-compares the complete 38-file test tree after LF normalization |
+| Frozen behavior is preserved | `npm test` verifies the snapshot, runs 28 native tests, then passes all 1,977 unchanged upstream tests and the adapter checks |
+| Broad generated behavior agrees | `npm run fuzz:ci` runs five fixed seeds x 20,000 generated comparisons plus 107 directed cases per seed: 0 mismatches |
+| Legacy JavaScript case folding is exact | `npm run test:casefold` exhaustively checks the Node-derived 1,166-entry legacy BMP mapping through literal and class execution |
+| Failure stays safe and visible | `npm run test:bridge-timeout` proves bounded bridge teardown; native regex work exhaustion returns a recoverable error rather than a false non-match |
+| Dependencies and native code are clean | `npm audit --audit-level=high`, the vendored `regress` suite, and Rust 1.85 Clippy all pass |
 
 ## Reproduce it
 
 Requirements: Rust 1.85 or newer, Node.js 24 or newer, and Git.
 
-Single build command:
-
-```sh
-cargo build --release
-```
-
 ```sh
 npm ci
+cargo build --release
 npm run verify:upstream
 npm test
+npm run test:casefold
 npm run fuzz:ci
+npm run test:bridge-timeout
 npm run demo
 ```
 
-`npm test` verifies the frozen SHA-256 manifest, runs the native Rust suite,
-builds the port, and executes all original JavaScript tests unchanged.
-`verify:upstream` adds the network-backed provenance check. A compiled-once,
-direct-native throughput smoke test is also available:
+`npm test` checks the frozen manifest before running the native and unchanged
+upstream suites. `verify:upstream` adds the network-backed provenance check.
+For the three benchmark paths:
 
 ```sh
+npm run bench:reference
 npm run bench
+npm run bench:bridge
 ```
 
 ## Use the Rust API
@@ -81,87 +82,102 @@ assert!(matched);
 # Ok::<(), picomatch_mortis::GlobError>(())
 ```
 
-The repository also contains a CLI and a persistent line protocol used by the
-proof harness:
+The repository also includes a CLI and a persistent typed protocol used by the
+proof harness. `--payload` keeps pattern/input data distinct from options:
 
 ```sh
-cargo run -- is-match "src/**/*.rs" "src/glob.rs"
-cargo run -- source "!(*.test).js"
-cargo run -- scan "src/**/*.rs" --parts --tokens
+cargo run --release --quiet -- is-match --payload "src/**/*.rs" "src/glob.rs"
+cargo run --release --quiet -- source --payload "!(*.test).js"
+cargo run --release --quiet -- scan --parts --tokens --payload "src/**/*.rs"
 ```
 
 ## Architecture
 
 ```text
-unchanged JS tests
+unchanged JavaScript tests
         |
         v
-thin JS API adapter -- callbacks, arrays, JS RegExp reconstruction
+thin JS adapter -- callbacks, API shortcuts, RegExp reconstruction
         |
         v
-persistent native bridge -- serialization only, no glob logic
+typed persistent bridge -- framing and lifecycle, no fallback matcher
         |
         v
-safe Rust scanner + glob compiler
+safe Rust scanner + compiler + matcher
         |
-        +--> public ECMAScript-compatible source
-        |
-        `--> slash-safe native execution source --> regress engine
+        `--> patched, vendored regress 0.11.1 engine
 ```
 
-The two generated regex forms solve a subtle compatibility problem. Picomatch
-exposes JavaScript regex text whose negated classes can admit `/`, while glob
-matching must still enforce path-segment boundaries. Keeping a public form and
-a private execution form preserves both observable API output and correct
-native behavior.
+The scanner is O(n): one structural pass plus one linear UTF-16 index-conversion
+pass. The compiler emits a public ECMAScript-compatible source and a private
+native execution form where those responsibilities differ. The patched `regress` 0.11.1 engine supplies native
+execution, exact Node-derived legacy non-`u` case folding, and deterministic
+work fuel across dispatch, backtracking, optimized scans, backreferences and
+lookarounds.
 
-The JavaScript adapter contains no built-in matching engine. It keeps one Rust
-process alive and uses a synchronous worker/`SharedArrayBuffer` bridge because
-Picomatch's public API is synchronous. JavaScript-only values such as
-callbacks (including `expandRange` transformation), arrays, and `RegExp`
-reconstruction are necessarily orchestrated there; scanner, compiler, and
-Boolean matcher behavior otherwise run in Rust.
+The bridge is deliberately boring: typed hex framing, bounded buffers,
+sequence-checked responses, and explicit close/timeout behavior. JavaScript
+still orchestrates values that only exist in its API, such as callbacks,
+arrays and `RegExp` objects. It also preserves Picomatch's explicit empty-input,
+exact-input and invalid-source shortcuts; every compiled-pattern search lives
+in Rust.
 
 ## Hard parts
 
-1. **Extglob semantics.** Nested negation, adjacent extglobs, slash-containing
-   bodies, Bash backtracking cases, and suffix-sensitive negative lookaheads
-   required structural compilation rather than string replacement.
-2. **ReDoS safeguards.** Risky repeated alternatives are literalized, safe
-   star-only languages are reduced to character repetitions, and bounded
-   nested recursion preserves upstream's `maxExtglobRecursion` behavior.
-3. **Cross-platform escapes.** Windows normalization and Picomatch's unusual
-   collapse of very long even backslash runs required explicit behavior and
-   multi-OS CI.
-4. **API-visible regexes.** `parse`/`makeRe` source parity and native matching
-   sometimes need different internal expressions, so neither substitutes for
-   the other.
+1. **Extglob structure.** Nested negation, adjacent extglobs, slash-containing
+   bodies, Bash backtracking and suffix-sensitive lookaheads required a real
+   compiler rather than string replacement.
+2. **JavaScript regex fidelity.** Legacy ignore-case behavior is neither ASCII
+   folding nor modern Unicode folding, so the engine uses a generated table
+   derived from Node 24 and exhaustively rechecks it against Node.
+3. **Captures and flags.** Match spans use JavaScript UTF-16 offsets, absent
+   captures stay absent, named groups and `d` indices survive the bridge, and
+   `d/i/m/s/u/v/g/y` semantics are covered without moving glob logic into JS.
+4. **Adversarial safety.** Compilation and execution have separate structural
+   and work budgets. Execution fuel is shared through lookarounds, so costly
+   expressions cannot reset the allowance by entering a nested assertion.
+5. **Cross-platform paths.** Windows normalization, separator boundaries and
+   Picomatch's unusual long-backslash behavior are verified on both operating
+   systems in CI.
 
-## Provenance and scope
+## Safety boundaries and honest scope
+
+Native compilation enforces these hard limits:
+
+- 65,536 UTF-16 code units per pattern
+- nesting depth 64
+- 1,024 alternation branches per scope
+- 512 unmatched bracket markers
+- a pattern-proportional compile-work budget
+- a 4 MiB proof-bridge buffer
+
+The proof bridge explicitly rejects lone UTF-16 surrogates instead of silently
+replacing them. Completed native matches preserve the tested semantics; if
+deterministic regex fuel is exhausted, the native API returns an explicit,
+recoverable error rather than `false`. A `RegExp` obtained from `makeRe` and
+then executed directly by caller JavaScript runs in the caller's engine and
+therefore does not inherit the native fuel limit.
+
+Public regex source is API-visible and can differ structurally from the
+reference, especially for complex globstars, even where observed execution and
+captures agree. `scan`, `parse`, `makeRe`, options, callbacks and match arrays
+are covered by the frozen suites and focused checks; the randomized corpus is
+a broad bounded Boolean-match comparison, not a proof over the entire input
+space.
+
+## Provenance
 
 - Kickoff: 2026-07-31 18:00 UTC
 - Upstream commit: [`4f41a8e`](https://github.com/micromatch/picomatch/tree/4f41a8edade7a5ab19832f7b40ecce46b288767f)
 - Upstream implementation: 2,444 JavaScript source lines
 - First port commit: [`eb06bd8`](https://github.com/LubuSeb/picomatch-mortis/commit/eb06bd8), created after kickoff
-- Incremental history: scanner, core matcher, multi-OS proof, hardening, then
-  complete extglob and recursion parity
+- Incremental history: scanner, core matcher, multi-OS proof, hardening, full
+  extglob/capture/flag parity, then deterministic execution limits
 
-| Surface | Status |
-| --- | --- |
-| Core Boolean `picomatch()` / `isMatch` behavior | Frozen-suite parity plus an 80,000-case, four-seed bounded differential corpus |
-| `scan`, `parse`, `makeRe`, options and callbacks used upstream | Covered by unchanged upstream suites |
-| Rust library and CLI | Implemented and tested; not yet published as a stable package |
-| JS-only callback execution and array orchestration | Intentionally remains in the thin adapter |
-| Adversarial compiler inputs | Native compilation rejects structural nesting above 64 and patterns that exhaust a proportional work budget; this is an intentional safety boundary |
-| Raw user regex with ambiguous nested repetition | The bridge has a bounded failure-and-teardown path; no formal worst-case guarantee is claimed |
-| Differential surface | The random grammar exercises defaults plus `dot`, `nocase`, `contains`, `nonegate`, `noglobstar`, `nobrace`, `nobracket`, `strictSlashes`, `bash`, Windows/POSIX, and literal-bracket modes; directed regressions add selected `regex` compositions. `scan`/`parse`/`makeRe`, captures, and callback objects rely on the frozen suites |
-| Entire input space | Not formally proven; the claim is limited to the evidence above |
-
-The local direct-native benchmark reports about 0.59 million matches/second for
-four precompiled representative patterns on the development machine. The
-methodology, pinned-reference comparison, bridge cost, and limitations are in
-[BENCHMARK.md](BENCHMARK.md); it is not a cross-language victory claim.
-
-See [WRITEUP.md](WRITEUP.md) for the publishable porting narrative,
-[DECISIONS.md](DECISIONS.md) for the engineering decision log, and
-[DEMO_SCRIPT.md](DEMO_SCRIPT.md) for the 2--3 minute judge demo runbook.
+The local direct-native benchmark reaches a median **521,007 matches/second**
+for four precompiled representative patterns. Picomatch is much faster in the
+same microbenchmark; the result is a transparent cost measurement, not a
+cross-language speed claim. See [BENCHMARK.md](BENCHMARK.md) for all runs and
+methodology, [WRITEUP.md](WRITEUP.md) for the porting narrative,
+[DECISIONS.md](DECISIONS.md) for the engineering log, and
+[DEMO_SCRIPT.md](DEMO_SCRIPT.md) for the judge demo.

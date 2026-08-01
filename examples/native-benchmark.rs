@@ -16,14 +16,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Result<Vec<_>, _>>()?;
 
     for index in 0..10_000 {
-        black_box(compiled[index % compiled.len()].is_match(cases[index % cases.len()].0));
+        black_box(
+            compiled[index % compiled.len()]
+                .is_match(cases[index % cases.len()].0)
+                .expect("benchmark warmup should stay within the execution budget"),
+        );
     }
 
     let iterations = 1_000_000usize;
     let mut matches = 0usize;
     let started = Instant::now();
     for index in 0..iterations {
-        if black_box(compiled[index % compiled.len()].is_match(cases[index % cases.len()].0)) {
+        if black_box(
+            compiled[index % compiled.len()]
+                .is_match(cases[index % cases.len()].0)
+                .expect("benchmark matching should stay within the execution budget"),
+        ) {
             matches += 1;
         }
     }

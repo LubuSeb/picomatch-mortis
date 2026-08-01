@@ -1,21 +1,11 @@
 'use strict'
 
-const { execFileSync } = require('node:child_process')
-const path = require('node:path')
-
-const binary = process.env.PICOMATCH_MORTIS_BIN || path.join(
-  __dirname,
-  '..',
-  '..',
-  'target',
-  'debug',
-  process.platform === 'win32' ? 'picomatch-mortis.exe' : 'picomatch-mortis'
-)
+const { call } = require('../bridge')
 
 const decode = value => Buffer.from(value, 'hex').toString()
 
 module.exports = (input, options = {}) => {
-  const args = ['scan', input]
+  const args = ['scan']
   if (options.scanToEnd) args.push('--scan-to-end')
   if (options.parts) args.push('--parts')
   if (options.tokens) args.push('--tokens')
@@ -23,8 +13,9 @@ module.exports = (input, options = {}) => {
   if (options.nonegate) args.push('--nonegate')
   if (options.noparen) args.push('--noparen')
   if (options.unescape) args.push('--unescape')
+  args.push('--payload', input)
 
-  const fields = execFileSync(binary, args, { encoding: 'utf8' }).trimEnd().split('\t')
+  const fields = call(args).split('\t')
   const state = {
     prefix: decode(fields[0]),
     input: decode(fields[1]),

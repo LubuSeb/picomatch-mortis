@@ -11,6 +11,7 @@ process.env.PICOMATCH_MORTIS_BIN = path.join(
   process.platform === 'win32' ? 'picomatch-mortis.exe' : 'picomatch-mortis'
 )
 const pm = require('../tests')
+const { close } = require('../tests/bridge')
 
 const cases = [
   ['src/parser/glob.rs', 'src/**/*.rs'],
@@ -18,18 +19,17 @@ const cases = [
   ['release-042.txt', 'release-{0..9}{0..9}{0..9}.txt'],
   ['foo/bar/baz.jsx', 'foo/bar/**/*.+(js|jsx)'],
 ]
+const matchers = cases.map(([, pattern]) => pm(pattern))
 
 for (let index = 0; index < 1_000; index++) {
-  const [input, pattern] = cases[index % cases.length]
-  pm.isMatch(input, pattern)
+  matchers[index % matchers.length](cases[index % cases.length][0])
 }
 
 const iterations = 25_000
 let matches = 0
 const started = performance.now()
 for (let index = 0; index < iterations; index++) {
-  const [input, pattern] = cases[index % cases.length]
-  if (pm.isMatch(input, pattern)) matches++
+  if (matchers[index % matchers.length](cases[index % cases.length][0])) matches++
 }
 const elapsed = performance.now() - started
 
@@ -40,3 +40,5 @@ console.log(JSON.stringify({
   elapsedMs: Number(elapsed.toFixed(2)),
   operationsPerSecond: Math.round(iterations / (elapsed / 1_000)),
 }, null, 2))
+
+void close()

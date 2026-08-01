@@ -508,18 +508,41 @@ pub fn scan(input: &str, options: ScanOptions) -> ScanState {
         state.parts = Some(parts);
     }
 
-    state.start = utf16_index(input, state.start);
-    if let Some(slashes) = &mut state.slashes {
-        for slash in slashes {
-            *slash = utf16_index(input, *slash);
-        }
-    }
+    state.start = convert_positions_to_utf16(input, state.start, state.slashes.as_deref_mut());
 
     state
 }
 
-fn utf16_index(input: &str, byte_index: usize) -> usize {
-    input[..byte_index].encode_utf16().count()
+fn convert_positions_to_utf16(
+    input: &str,
+    start_byte: usize,
+    slashes: Option<&mut [usize]>,
+) -> usize {
+    if input.is_ascii() {
+        return start_byte;
+    }
+
+    let slashes = slashes.unwrap_or_default();
+    let mut slash_cursor = 0usize;
+    let mut start_utf16 = (start_byte == 0).then_some(0);
+    let mut utf16_offset = 0usize;
+
+    for (byte_offset, character) in input.char_indices() {
+        if byte_offset == start_byte {
+            start_utf16 = Some(utf16_offset);
+        }
+        while slashes.get(slash_cursor).copied() == Some(byte_offset) {
+            slashes[slash_cursor] = utf16_offset;
+            slash_cursor += 1;
+        }
+        utf16_offset += character.len_utf16();
+    }
+
+    if start_byte == input.len() {
+        start_utf16 = Some(utf16_offset);
+    }
+    debug_assert_eq!(slash_cursor, slashes.len());
+    start_utf16.expect("scan start must be a UTF-8 character boundary")
 }
 
 #[cfg(test)]
@@ -605,5 +628,51 @@ mod tests {
             },
         );
         assert_eq!(astral.slashes, Some(vec![2]));
+    }
+
+    #[test]
+    fn converts_slash_dense_indexes_without_prefix_rescans() {
+        const ASCII_SEGMENTS: usize = 16_384;
+        let ascii_input = "a/".repeat(ASCII_SEGMENTS);
+        let ascii = scan(
+            &ascii_input,
+            ScanOptions {
+                parts: true,
+                tokens: true,
+                ..ScanOptions::default()
+            },
+        );
+        let ascii_slashes = ascii.slashes.expect("slash details requested");
+        assert_eq!(ascii_slashes.len(), ASCII_SEGMENTS);
+        assert!(
+            ascii_slashes
+                .iter()
+                .enumerate()
+                .all(|(index, slash)| *slash == index * 2 + 1)
+        );
+        assert_eq!(ascii.parts.expect("parts requested").len(), ASCII_SEGMENTS);
+        assert_eq!(
+            ascii.tokens.expect("tokens requested").len(),
+            ASCII_SEGMENTS
+        );
+
+        const ASTRAL_SEGMENTS: usize = 4_096;
+        let astral_input = "\u{1f600}/".repeat(ASTRAL_SEGMENTS);
+        let astral = scan(
+            &astral_input,
+            ScanOptions {
+                parts: true,
+                tokens: true,
+                ..ScanOptions::default()
+            },
+        );
+        let astral_slashes = astral.slashes.expect("slash details requested");
+        assert_eq!(astral_slashes.len(), ASTRAL_SEGMENTS);
+        assert!(
+            astral_slashes
+                .iter()
+                .enumerate()
+                .all(|(index, slash)| *slash == index * 3 + 2)
+        );
     }
 }
