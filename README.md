@@ -2,7 +2,9 @@
 
 [![proof](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml/badge.svg)](https://github.com/LubuSeb/picomatch-mortis/actions/workflows/ci.yml)
 
-[Benchmark report](BENCHMARK.md) | [2-3 minute demo runbook](DEMO_SCRIPT.md)
+[Judge demo (2:40, captioned MP4)](https://github.com/LubuSeb/picomatch-mortis/releases/download/port-mortem-demo-v1/picomatch-mortis-judge-demo-1080p.mp4) |
+[Benchmark report](BENCHMARK.md) | [Demo runbook](DEMO_SCRIPT.md) |
+[Captions and transcript](https://github.com/LubuSeb/picomatch-mortis/releases/tag/port-mortem-demo-v1)
 
 Picomatch Mortis is a standalone Rust implementation of
 [`micromatch/picomatch`](https://github.com/micromatch/picomatch)'s scanner,
