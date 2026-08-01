@@ -18,7 +18,7 @@ const examples = [
 
 const main = async () => {
   try {
-    console.log('Picomatch Mortis - Track F: JavaScript to Rust')
+    console.log('Picomatch Mortis - JavaScript to Rust')
     console.log('Proof: 28 Rust tests + 1,977 unchanged upstream tests')
     console.log('Differential: 100,000 generated comparisons + 535 directed executions, 0 mismatches\n')
 

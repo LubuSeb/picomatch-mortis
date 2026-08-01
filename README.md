@@ -11,8 +11,8 @@ JavaScript fallback glob matcher. If deterministic regex fuel is exhausted, the
 native API returns an explicit, recoverable error rather than `false`, and the
 same persistent process handles the next ordinary match.
 
-The project was selected from the official Port Mortem 2026 pool for **Track F:
-JavaScript to Go/Rust**. Glob compatibility is consequential: one edge-case
+The project was selected from the official Port Mortem 2026 pool for the
+**JavaScript-to-Rust track**. Glob compatibility is consequential: one edge-case
 mismatch can select the wrong files in a build, test, or packaging pipeline.
 
 ## Result
@@ -122,8 +122,8 @@ The bridge is deliberately boring: typed hex framing, bounded buffers,
 sequence-checked responses, and explicit close/timeout behavior. JavaScript
 still orchestrates values that only exist in its API, such as callbacks,
 arrays and `RegExp` objects. It also preserves Picomatch's explicit empty-input,
-exact-input and invalid-source shortcuts; every compiled-pattern search lives
-in Rust.
+exact-input and invalid-source shortcuts. Every non-short-circuited matcher
+search made through this adapter executes in Rust.
 
 ## Hard parts
 
@@ -152,11 +152,10 @@ Native compilation enforces these hard limits:
 - 1,024 alternation branches per scope
 - 512 unmatched bracket markers
 - a pattern-proportional compile-work budget
-- a 4 MiB proof-bridge buffer
 
-The proof bridge explicitly rejects lone UTF-16 surrogates instead of silently
-replacing them. Completed native matches preserve the tested semantics; if
-deterministic regex fuel is exhausted, the native API returns an explicit,
+The proof bridge separately caps each request and response at 4 MiB, and
+explicitly rejects lone UTF-16 surrogates instead of silently replacing them.
+If deterministic regex fuel is exhausted, the native API returns a distinct,
 recoverable error rather than `false`. A `RegExp` obtained from `makeRe` and
 then executed directly by caller JavaScript runs in the caller's engine and
 therefore does not inherit the native fuel limit.

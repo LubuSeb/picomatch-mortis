@@ -1,6 +1,6 @@
 # Picomatch Mortis: porting Picomatch from JavaScript to Rust
 
-*Port Mortem 2026, Track F -- JavaScript to Rust*
+*Port Mortem 2026 -- JavaScript to Rust*
 
 Picomatch Mortis is a standalone Rust implementation of Picomatch's scanner,
 compiler, and matcher. The CLI runs without Node, the proof harness has no
@@ -130,9 +130,9 @@ Regex execution uses a vendored, Rust-1.85-compatible `regress` 0.11.1. The
 patch adds deterministic fuel to instruction dispatch, backtracking, optimized
 scans, and backreference comparisons. Each match receives one million base
 steps, 16 per input code unit, and 64 per compiled instruction, capped at 40
-million. A completed result preserves matcher semantics. Exhaustion never
-becomes a plausible-looking `false`; it returns an explicit, recoverable
-`safe work limit` error.
+million. Execution has a distinct exhaustion outcome: it never becomes a
+plausible-looking `false`, but returns an explicit, recoverable `safe work
+limit` error.
 
 That distinction matters in practice. A one-million-character linear `*`
 match completes successfully. The hostile pattern `+(a*)b` against 30 `a`
@@ -141,8 +141,7 @@ the next `a` against `a` call succeeds through the same bridge.
 
 ## What differential testing found
 
-The discrepancy ledger is part of the result, not an embarrassment hidden by
-the final zero:
+Each mismatch became a fixed, directed regression:
 
 | Discrepancy cluster | Representative failure | Rust-side correction |
 | --- | --- | --- |
@@ -156,9 +155,9 @@ the final zero:
 | Eager ignore behavior | An invalid ignore pattern failed only on first use | Compile ignore patterns at matcher construction while keeping non-short-circuited ignore searches native |
 
 The first deterministic run exposed dozens of real differences. Expanding the
-grammar and asking independent reviewers for adversarial cases found more in
-Unicode, flags, captures, framing, and Windows behavior. Every one above is now
-a directed regression; the five-seed run reports zero mismatches.
+grammar and running separate adversarial review passes found more in Unicode,
+flags, captures, framing, and Windows behavior. Every one above is now a
+directed regression; the five-seed run reports zero mismatches.
 
 ## Result and honest boundary
 
@@ -170,7 +169,7 @@ Unsafe code is forbidden in this crate. The vendored engine runs with its
 Unicode-fold lookup branch.
 
 This is strong reproducible evidence, not a formal proof over every string.
-Completed native matches preserve the implemented semantics; a match that
+The proof distinguishes a non-match from execution exhaustion: a match that
 exhausts deterministic fuel returns an error. `makeRe` must return a JavaScript
 `RegExp` for API compatibility, so a caller who executes that returned object
 directly is running Node's engine and does not inherit native fuel limits.
