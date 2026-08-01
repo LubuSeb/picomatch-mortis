@@ -24,7 +24,7 @@ The repository turns each compatibility claim into a reproducible gate:
 | Unchanged upstream suite | 1,977 tests pass |
 | Native regressions | 28 Rust tests pass |
 | Differential matching | 100,000 generated comparisons across five fixed 20,000-case seeds, plus 535 directed executions (107 per seed), with zero mismatches |
-| Legacy case folding | All 1,166 nonidentity BMP mappings checked through 2,386 ordered equivalences and 4,772 literal/class mapping checks |
+| Legacy case folding | All 1,169 nonidentity BMP mappings checked through 2,392 ordered equivalences and 4,784 literal/class mapping checks on pinned Node 24.18.0 |
 
 The test manifest is verified before the suite runs. A second provenance command
 fetches the exact upstream commit, verifies that the manifest names the complete
@@ -44,7 +44,9 @@ text is poor at finding its quirks. The vendored engine contains the exact
 ECMAScript Canonicalize table for all BMP code units. The proof derives every
 equivalence class, checks both literal and character-class paths against Node
 and pinned Picomatch, and enables `capture` to bypass the exact-input shortcut.
-That forces both regex engines to execute all 4,772 checks.
+The runtime is pinned because JavaScript's Unicode data can change even within
+a Node major release. That forces both regex engines to execute all 4,784
+checks against one declared reference.
 
 ## Where the implementation lives
 

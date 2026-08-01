@@ -9,7 +9,7 @@ reproducible cost measurement, not a claim that the Rust port is faster.
 - Date: 2026-08-01
 - OS: Windows 11, build 10.0.26200
 - CPU: AMD Ryzen 9 3950X
-- Node.js: 24.13.0
+- Node.js: 24.18.0
 - Active rustc: 1.97.1
 - Build profile: release
 - Reference: `micromatch/picomatch` commit `4f41a8edade7a5ab19832f7b40ecce46b288767f`
@@ -42,21 +42,21 @@ match.
 
 | Path | Timed calls/run | Run 1 | Run 2 | Run 3 | Median |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Pinned Picomatch / Node.js | 1,000,000 | 7,578,674 ops/s | 7,627,451 ops/s | 7,702,671 ops/s | **7,627,451 ops/s** |
-| Rust API, direct native | 1,000,000 | 521,007 ops/s | 521,301 ops/s | 495,790 ops/s | **521,007 ops/s** |
-| Rust through proof bridge | 25,000 | 10,949 ops/s | 11,810 ops/s | 12,020 ops/s | **11,810 ops/s** |
+| Pinned Picomatch / Node.js | 1,000,000 | 7,184,496 ops/s | 7,153,342 ops/s | 7,255,715 ops/s | **7,184,496 ops/s** |
+| Rust API, direct native | 1,000,000 | 395,936 ops/s | 395,048 ops/s | 393,696 ops/s | **395,048 ops/s** |
+| Rust through proof bridge | 25,000 | 9,855 ops/s | 11,602 ops/s | 12,144 ops/s | **11,602 ops/s** |
 
 ## Interpretation
 
-Picomatch is about 14.6x faster than the direct native path in this
+Picomatch is about 18.2x faster than the direct native path in this
 microbenchmark. It benefits from V8's optimized RegExp engine; the Rust port
 uses the safe, ECMAScript-compatible `regress` interpreter, including explicit
 execution-fuel bookkeeping. The synchronous proof bridge is another roughly
-44x below direct native throughput because worker wakeups, framing, IPC and JS
+34x below direct native throughput because worker wakeups, framing, IPC and JS
 API reconstruction dominate such tiny matches.
 
 These numbers establish three useful facts: the native matcher is practical at
-roughly 0.52 million matches/second for this workload, the compatibility bridge
+roughly 0.40 million matches/second for this workload, the compatibility bridge
 has a visible and measured cost, and performance is not this submission's win
 claim. Its primary result is behavior preservation backed by reproducible
 provenance, differential testing and explicit failure boundaries.

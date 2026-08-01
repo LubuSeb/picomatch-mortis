@@ -18,8 +18,8 @@ the wrong files in a build, test, or packaging pipeline.
   of 38 files at Picomatch commit `4f41a8e`, alongside **28 native Rust tests**.
 - Five fixed differential seeds exercise **100,000 generated comparisons plus
   535 directed executions: 0 mismatches**.
-- A separate legacy-ignore-case proof checks all **1,166 nonidentity BMP mappings**:
-  2,386 ordered equivalences and 4,772 literal/class checks in 38 batches.
+- A separate legacy-ignore-case proof checks all **1,169 nonidentity BMP mappings**:
+  2,392 ordered equivalences and 4,784 literal/class checks in 38 batches.
 - The full vendored regex-engine suite passes, Rust 1.85 Clippy is clean, and
   `npm audit` reports zero vulnerabilities.
 - CI runs the proof on Ubuntu and Windows. The crate uses
@@ -39,13 +39,13 @@ including named groups and `d` indices, with `g`/`y` state behavior preserved.
 | The tests are really upstream's | `npm run verify:upstream` fetches commit `4f41a8e` and byte-compares the complete 38-file test tree after LF normalization |
 | Frozen behavior is preserved | `npm test` verifies the snapshot, runs 28 native tests, then passes all 1,977 unchanged upstream tests and the adapter checks |
 | Broad generated behavior agrees | `npm run fuzz:ci` runs five fixed seeds x 20,000 generated comparisons plus 107 directed cases per seed: 0 mismatches |
-| Legacy JavaScript case folding is exact | `npm run test:casefold` exhaustively checks the Node-derived 1,166-entry legacy BMP mapping through literal and class execution |
+| Legacy JavaScript case folding is exact | `npm run test:casefold` exhaustively checks the Node 24.18.0-derived 1,169-entry legacy BMP mapping through literal and class execution |
 | Failure stays safe and visible | `npm run test:bridge-timeout` proves bounded bridge teardown; native regex work exhaustion returns a recoverable error rather than a false non-match |
 | Dependencies and native code are clean | `npm audit --audit-level=high`, the vendored `regress` suite, and Rust 1.85 Clippy all pass |
 
 ## Reproduce it
 
-Requirements: Rust 1.85 or newer, Node.js 24 or newer, and Git.
+Requirements: Rust 1.85 or newer, the proof-pinned Node.js 24.18.0, and Git.
 
 ```sh
 npm ci
@@ -111,7 +111,7 @@ safe Rust scanner + compiler + matcher
 The scanner is O(n): one structural pass plus one linear UTF-16 index-conversion
 pass. The compiler emits a public ECMAScript-compatible source and a private
 native execution form where those responsibilities differ. The patched `regress` 0.11.1 engine supplies native
-execution, exact Node-derived legacy non-`u` case folding, and deterministic
+execution, exact Node 24.18.0-derived legacy non-`u` case folding, and deterministic
 work fuel across dispatch, backtracking, optimized scans, backreferences and
 lookarounds.
 
@@ -129,7 +129,7 @@ in Rust.
    compiler rather than string replacement.
 2. **JavaScript regex fidelity.** Legacy ignore-case behavior is neither ASCII
    folding nor modern Unicode folding, so the engine uses a generated table
-   derived from Node 24 and exhaustively rechecks it against Node.
+   derived from the pinned Node 24.18.0 runtime and exhaustively rechecks it.
 3. **Captures and flags.** Match spans use JavaScript UTF-16 offsets, absent
    captures stay absent, named groups and `d` indices survive the bridge, and
    `d/i/m/s/u/v/g/y` semantics are covered without moving glob logic into JS.
@@ -174,7 +174,7 @@ space.
 - Incremental history: scanner, core matcher, multi-OS proof, hardening, full
   extglob/capture/flag parity, then deterministic execution limits
 
-The local direct-native benchmark reaches a median **521,007 matches/second**
+The local direct-native benchmark reaches a median **395,048 matches/second**
 for four precompiled representative patterns. Picomatch is much faster in the
 same microbenchmark; the result is a transparent cost measurement, not a
 cross-language speed claim. See [BENCHMARK.md](BENCHMARK.md) for all runs and

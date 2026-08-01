@@ -143,17 +143,19 @@ inputs may therefore hit a disclosed safety boundary.
 **Time:** 2026-08-01, final semantic and security hardening
 
 **Decision:** Vendor `regress` 0.11.1, retain `prohibit-unsafe`, patch it for
-Rust 1.85, add the exact legacy ECMAScript Canonicalize table, and meter regex
-execution deterministically. The budget is 1,000,000 base steps plus 16 per
-input code unit and 64 per compiled instruction, capped at 40,000,000; dispatch,
-backtracking, optimized scans, and backreference comparisons all consume fuel.
+Rust 1.85, add the exact legacy ECMAScript Canonicalize table derived from
+pinned Node 24.18.0, and meter regex execution deterministically. The budget is
+1,000,000 base steps plus 16 per input code unit and 64 per compiled instruction,
+capped at 40,000,000; dispatch, backtracking, optimized scans, and backreference
+comparisons all consume fuel.
 
 **Why:** Unicode folding is not a substitute for legacy non-`u` JavaScript `/i`
 semantics, and a compiler-only rewrite cannot bound every backtracking regex.
 Depending on wall-clock cancellation would make results machine-dependent.
 
-**Consequence:** A separate proof checks all 1,166 nonidentity BMP mappings,
-2,386 ordered equivalences, and 4,772 literal/class mapping paths. A
+**Consequence:** A separate proof checks all 1,169 nonidentity BMP mappings,
+2,392 ordered equivalences, and 4,784 literal/class mapping paths. Pinning the
+minor Node runtime keeps the Unicode-dependent reference reproducible. A
 one-million-character linear star match succeeds, while `+(a*)b` on a short
 near-miss returns an explicit safe-work-limit error in milliseconds. Exhaustion
 is never reported as `false`, and the next bridge call succeeds.

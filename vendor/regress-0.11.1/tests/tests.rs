@@ -1819,6 +1819,10 @@ fn test_unicode_folding() {
 
 /// 262 test/language/literals/regexp/u-case-mapping.js
 fn test_unicode_folding_tc(tc: TestConfig) {
+    // Unicode 17 pairs exposed by Node 24.18's legacy Canonicalize behavior.
+    tc.test_match_succeeds(r"\u{A7CE}", "i", "\u{A7CF}");
+    tc.test_match_succeeds(r"\u{A7D2}", "i", "\u{A7D3}");
+    tc.test_match_succeeds(r"\u{A7D4}", "i", "\u{A7D5}");
     tc.test_match_fails(r"\u{212A}", "i", "k");
     tc.test_match_fails(r"\u{212A}", "i", "K");
     tc.test_match_fails(r"\u{212A}", "u", "k");

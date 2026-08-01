@@ -20,6 +20,7 @@ const { close } = require('../tests/bridge')
 const LEGACY_OPTIONS = { flags: 'i', windows: false, capture: true }
 const LEGACY_CLASS_OPTIONS = { ...LEGACY_OPTIONS, literalBrackets: false }
 const BATCH_SIZE = 128
+const EXPECTED_NODE_VERSION = 'v24.18.0'
 
 const canonicalizeLegacyCodeUnit = codeUnit => {
   const upper = String.fromCharCode(codeUnit).toUpperCase()
@@ -72,6 +73,12 @@ const batchContext = batch => {
 }
 
 const main = async () => {
+  assert.equal(
+    process.version,
+    EXPECTED_NODE_VERSION,
+    `Legacy case-fold proof requires Node ${EXPECTED_NODE_VERSION.slice(1)}; got ${process.version}`
+  )
+
   const started = process.hrtime.bigint()
   let checkCount = 0
   let nativeBatchCount = 0

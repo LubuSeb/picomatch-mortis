@@ -9,7 +9,8 @@ The local delta is deliberately narrow:
 
 - replace syntax newer than Rust 1.85 without changing behavior;
 - correct an upstream-reversed `prohibit-unsafe` branch in Unicode folding;
-- add the exact non-Unicode ECMAScript `Canonicalize` table derived from Node 24
+- add the exact non-Unicode ECMAScript `Canonicalize` table derived from pinned
+  Node 24.18.0
   for BMP code units;
 - thread one deterministic execution-fuel counter through nested lookarounds;
 - charge dispatch, backtracking, optimized scans, and backreference comparison;
