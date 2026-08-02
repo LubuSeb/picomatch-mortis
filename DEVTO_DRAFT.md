@@ -1,4 +1,9 @@
-# I ported Picomatch to Rust. It passed 1,977 tests and lost the benchmark by 18x
+---
+title: I ported Picomatch to Rust. It passed 1,977 tests and lost the benchmark by 18x
+published: true
+description: How one Unicode mismatch, 100,535 differential checks, and an honest benchmark changed the way I test AI-assisted ports.
+tags: rust, javascript, testing, hackathon
+---
 
 *A Port Mortem 2026 write-up about a JavaScript to Rust port, one strange Unicode character, and what green tests do not tell you.*
 
@@ -144,7 +149,6 @@ Picomatch Mortis now passes all 1,977 frozen upstream tests and 28 native tests.
 - [Benchmark report](https://github.com/LubuSeb/picomatch-mortis/blob/main/BENCHMARK.md)
 - [Judge demo](https://github.com/LubuSeb/picomatch-mortis/releases/tag/port-mortem-demo-v1)
 
-Built for Hackathon Raptors' Port Mortem 2026, JavaScript to Rust track.
+Built for [Hackathon Raptors](https://www.raptors.dev/), [@raptors_hack](https://x.com/raptors_hack), and the Port Mortem 2026 JavaScript to Rust track.
 
-- [Published article on DEV](https://dev.to/lubuseb/i-ported-picomatch-to-rust-it-passed-1977-tests-and-lost-the-benchmark-by-18x-19fa)
-- [Announcement on X](https://x.com/sebastien_and/status/2083918636868100412)
+*Disclosure: I used AI coding agents during the port and AI assistance to structure, edit, and fact-check this article. Every technical claim was checked against the repository's tests, scripts, decision log, and benchmark artifacts.*
